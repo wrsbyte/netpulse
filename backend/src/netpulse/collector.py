@@ -17,19 +17,21 @@ import time
 from collections.abc import Awaitable, Callable, Iterator
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from netpulse import alerts
 from netpulse.aggregation import run_rollups
 from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
-from netpulse.db.models import Event, State
+from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
+from netpulse.db.models import Event, Network, State
 from netpulse.db.session import get_session, init_engine
 from netpulse.logging import configure_logging, get_logger
 from netpulse.probes import (
     active,
     dns,
     flows,
+    network,
     ping,
     public_ip,
     throughput,
@@ -49,17 +51,23 @@ class Collector:
         self.iface = config.interface
         self.scheduler = AsyncIOScheduler()
         self._last_bssid: str | None = None
+        self._network_id: int | None = None
 
     async def start(self) -> None:
         if not self.iface:
             self.iface = await _detect_iface()
-        log.info("starting", iface=self.iface, targets=len(self.config.targets))
+        await self._sync_network()
+        if self._network_id is not None:
+            self._backfill_network(self._network_id)
+        log.info("starting", iface=self.iface, targets=len(self.config.targets),
+                 network_id=self._network_id)
         self._schedule()
         self.scheduler.start()
 
     def _schedule(self) -> None:
         iv = self.config.intervals
         add = self.scheduler.add_job
+        add(self._guard(self._sync_network), "interval", seconds=iv.network)
         add(self._guard(self._ping), "interval", seconds=iv.ping)
         add(self._guard(self._wifi), "interval", seconds=iv.wifi)
         add(self._guard(self._throughput), "interval", seconds=iv.throughput)
@@ -89,6 +97,7 @@ class Collector:
         results = await asyncio.gather(
             *(ping.sample(now, t.host) for t in self.config.targets)
         )
+        self._stamp(results)
         with _session() as s:
             s.add_all(results)
             self._detect_outage(s, now, results)
@@ -98,6 +107,7 @@ class Collector:
         row = await wifi.sample(time.time(), self.iface)
         if row is None:
             return
+        self._stamp([row])
         with _session() as s:
             s.add(row)
             self._detect_roaming(s, row.ts, row.bssid)
@@ -160,7 +170,8 @@ class Collector:
         if down and open_event is None:
             gw_down = any(by_host[t.host].loss_pct >= 100 for t in gateway)
             cause = "wifi/lan" if gw_down else "isp"
-            s.add(Event(ts=now, end_ts=None, kind="outage", severity="error", detail=cause))
+            s.add(Event(ts=now, end_ts=None, kind="outage", severity="error", detail=cause,
+                        network_id=self._network_id))
             log.warning("outage started", cause=cause)
         elif not down and open_event is not None:
             open_event.end_ts = now
@@ -170,7 +181,7 @@ class Collector:
         if bssid and self._last_bssid and bssid != self._last_bssid:
             s.add(Event(
                 ts=now, end_ts=now, kind="roam", severity="info",
-                detail=f"{self._last_bssid} -> {bssid}",
+                detail=f"{self._last_bssid} -> {bssid}", network_id=self._network_id,
             ))
             log.info("roamed", from_bssid=self._last_bssid, to_bssid=bssid)
         if bssid:
@@ -185,7 +196,7 @@ class Collector:
         if state.value != value:
             s.add(Event(
                 ts=time.time(), end_ts=time.time(), kind="ip_change", severity="info",
-                detail=f"{family}: {state.value} -> {value}",
+                detail=f"{family}: {state.value} -> {value}", network_id=self._network_id,
             ))
             log.info("public ip changed", family=family, old=state.value, new=value)
             state.value = value
@@ -194,8 +205,58 @@ class Collector:
         rows = [r for r in rows if r is not None]
         if not rows:
             return
+        self._stamp(rows)
         with _session() as s:
             s.add_all(rows)
+            s.commit()
+
+    def _stamp(self, rows: list) -> None:  # type: ignore[type-arg]
+        """Tag rows with the current network so every sample is attributable."""
+        if self._network_id is None:
+            return
+        for row in rows:
+            if getattr(row, "network_id", "missing") is None:
+                row.network_id = self._network_id
+
+    async def _sync_network(self) -> None:
+        fp = await network.detect()
+        if fp is None:
+            return  # no default route = offline; keep the last known network
+        now = time.time()
+        with _session() as s:
+            net = s.scalars(select(Network).where(Network.key == fp.key)).first()
+            if net is None:
+                net = Network(
+                    key=fp.key, ssid=fp.ssid, bssid=fp.bssid, gateway_ip=fp.gateway_ip,
+                    gateway_mac=fp.gateway_mac, interface=fp.interface,
+                    label=fp.ssid or "Wired", first_seen=now, last_seen=now,
+                )
+                s.add(net)
+                s.flush()
+            else:
+                net.last_seen = now
+                net.bssid = fp.bssid or net.bssid
+            changed = self._network_id is not None and self._network_id != net.id
+            self._network_id = net.id
+            if changed:
+                s.add(Event(
+                    ts=now, end_ts=now, kind="network", severity="info",
+                    detail=f"switched to {net.label or net.key}", network_id=net.id,
+                ))
+                log.info("network changed", to_id=net.id, key=fp.key)
+            s.commit()
+
+    def _backfill_network(self, network_id: int) -> None:
+        """One-time: seed existing rows (all taken on today's single network) with it."""
+        with _session() as s:
+            if s.get(State, "network_backfilled") is not None:
+                return
+            for table in _NETWORK_SCOPED_TABLES:
+                s.execute(
+                    text(f"UPDATE {table} SET network_id = :nid WHERE network_id IS NULL"),
+                    {"nid": network_id},
+                )
+            s.add(State(key="network_backfilled", value="1"))
             s.commit()
 
 

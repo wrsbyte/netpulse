@@ -48,6 +48,7 @@ class Target(BaseModel):
 class Intervals(BaseModel):
     ping: int = 3
     wifi: int = 5
+    network: int = 15
     throughput: int = 3
     dns: int = 20
     flows: int = 30

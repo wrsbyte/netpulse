@@ -54,6 +54,36 @@ class FlowOut(BaseModel):
     conns: int
 
 
+class NetworkOut(BaseModel):
+    id: int
+    label: str | None
+    ssid: str | None
+    gateway_ip: str | None
+    gateway_mac: str | None
+    interface: str | None
+    first_seen: float
+    last_seen: float
+    is_current: bool
+
+
+class ScoreOut(BaseModel):
+    score: float
+    grade: str
+    breakdown: dict[str, float]
+
+
+class FindingOut(BaseModel):
+    severity: str
+    title: str
+    detail: str
+
+
+class VerdictOut(BaseModel):
+    score: ScoreOut
+    headline: str
+    findings: list[FindingOut]
+
+
 class Status(BaseModel):
     online: bool
     current_rtt: float | None

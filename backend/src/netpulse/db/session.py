@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from netpulse.db import models  # noqa: F401  (registers tables on Base.metadata)
 from netpulse.db.base import Base
+from netpulse.db.migrate import ensure_network_columns
 
 _engine: Engine | None = None
 _Session: sessionmaker[Session] | None = None
@@ -33,6 +34,7 @@ def init_engine(db_path: Path) -> Engine:
     _engine = create_engine(f"sqlite:///{db_path}", future=True)
     event.listen(_engine, "connect", _configure_sqlite)
     Base.metadata.create_all(_engine)
+    ensure_network_columns(_engine)
     _Session = sessionmaker(_engine, expire_on_commit=False)
     return _engine
 

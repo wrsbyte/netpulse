@@ -49,9 +49,14 @@ def _bucket(ts: float, width: int) -> float:
     return (int(ts) // width) * width
 
 
-def _summarize(bucket: float, resolution: str, metric: str, tag: str, values: list[float]) -> Agg:
+# group key: (bucket start, network_id, tag)
+GroupKey = tuple[float, int | None, str]
+
+
+def _summarize(key: GroupKey, resolution: str, metric: str, values: list[float]) -> Agg:
+    bucket, network_id, tag = key
     return Agg(
-        bucket=bucket, resolution=resolution, metric=metric, tag=tag,
+        bucket=bucket, network_id=network_id, resolution=resolution, metric=metric, tag=tag,
         avg=sum(values) / len(values), mn=min(values), mx=max(values),
         p95=percentile(values, 95), n=len(values),
     )
@@ -63,13 +68,14 @@ def _rollup_raw_to_5m(session: Session, source: MetricSource, since: float) -> N
         select(model).where(model.ts >= since)  # type: ignore[attr-defined]
     ).all()
 
-    grouped: dict[tuple[float, str], list[float]] = {}
+    grouped: dict[GroupKey, list[float]] = {}
     for row in rows:
         value = getattr(row, source.value_attr)
         if value is None:
             continue
         tag = getattr(row, source.tag_attr) if source.tag_attr else ""
-        grouped.setdefault((_bucket(row.ts, _5M), tag), []).append(value)  # type: ignore[attr-defined]
+        key = (_bucket(row.ts, _5M), row.network_id, tag)  # type: ignore[attr-defined]
+        grouped.setdefault(key, []).append(value)
 
     _replace_buckets(session, "5m", source.name, since, grouped)
 
@@ -81,11 +87,11 @@ def _rollup_5m_to_1h(session: Session, source: MetricSource, since: float) -> No
         )
     ).all()
 
-    grouped: dict[tuple[float, str], list[float]] = {}
+    grouped: dict[GroupKey, list[float]] = {}
     for row in rows:
         if row.avg is None:
             continue
-        grouped.setdefault((_bucket(row.bucket, _1H), row.tag), []).append(row.avg)
+        grouped.setdefault((_bucket(row.bucket, _1H), row.network_id, row.tag), []).append(row.avg)
 
     _replace_buckets(session, "1h", source.name, since, grouped)
 
@@ -95,15 +101,15 @@ def _replace_buckets(
     resolution: str,
     metric: str,
     since: float,
-    grouped: dict[tuple[float, str], list[float]],
+    grouped: dict[GroupKey, list[float]],
 ) -> None:
     session.execute(
         delete(Agg).where(
             Agg.resolution == resolution, Agg.metric == metric, Agg.bucket >= since
         )
     )
-    for (bucket, tag), values in grouped.items():
-        session.add(_summarize(bucket, resolution, metric, tag, values))
+    for key, values in grouped.items():
+        session.add(_summarize(key, resolution, metric, values))
 
 
 def run_rollups(session: Session, retention: Retention, now: float) -> None:
