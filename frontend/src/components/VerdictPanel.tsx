@@ -16,37 +16,84 @@ const SEV_DOT: Record<Finding['severity'], string> = {
   ok: 'bg-ok',
 }
 
+// What each sub-score measures + the direction that's better. Score itself is always 0–100.
+const BREAKDOWN_LABEL: Record<string, string> = {
+  loss: 'Packet loss',
+  latency: 'Latency',
+  jitter: 'Jitter',
+  bufferbloat: 'Bufferbloat',
+  availability: 'Uptime',
+}
+const BREAKDOWN_ORDER = ['loss', 'latency', 'jitter', 'bufferbloat', 'availability']
+
+function subTone(v: number): string {
+  if (v >= 80) return 'bg-ok'
+  if (v >= 60) return 'bg-warn'
+  return 'bg-danger'
+}
+
 export function VerdictPanel() {
   const range = useUi((s) => s.range)
   const { data, isLoading } = useVerdict(range)
+  const breakdown = data?.score.breakdown ?? {}
 
   return (
     <section className="rounded-xl border border-border bg-panel p-4">
-      <div className="flex items-start gap-4">
-        <div
-          className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border text-3xl font-bold tabular-nums ${
-            data ? gradeTone(data.score.grade) : 'border-border text-muted'
-          }`}
-          title={data ? `Health score ${data.score.score}/100` : undefined}
-        >
-          {data ? data.score.grade : '—'}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <div className="flex items-start gap-4 lg:flex-1">
+          <div
+            className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-xl border font-bold tabular-nums ${
+              data ? gradeTone(data.score.grade) : 'border-border text-muted'
+            }`}
+            title="Overall health grade A+ (best) to F (worst), from the weighted score below"
+          >
+            <span className="text-3xl leading-none">{data ? data.score.grade : '—'}</span>
+            <span className="mt-0.5 text-[10px] font-normal opacity-70">
+              {data ? `${Math.round(data.score.score)}/100` : ''}
+            </span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold text-ink">
+              {isLoading ? 'Analyzing…' : (data?.headline ?? 'No data yet')}
+            </h2>
+            <ul className="mt-2 space-y-1">
+              {data?.findings.map((f, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
+                  <span
+                    className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${SEV_DOT[f.severity]}`}
+                    title={f.severity}
+                  />
+                  <span className="text-ink">{f.title}.</span>
+                  <span className="text-muted">{f.detail}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-ink">
-            {isLoading ? 'Analyzing…' : (data?.headline ?? 'No data yet')}
-          </h2>
-          <ul className="mt-2 space-y-1">
-            {data?.findings.map((f, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm">
-                <span
-                  className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${SEV_DOT[f.severity]}`}
-                />
-                <span className="text-ink">{f.title}.</span>
-                <span className="text-muted">{f.detail}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+
+        {Object.keys(breakdown).length > 0 && (
+          <div className="lg:w-72 lg:shrink-0">
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-muted">
+              Score breakdown · higher is better (0–100)
+            </div>
+            <div className="space-y-1">
+              {BREAKDOWN_ORDER.filter((k) => k in breakdown).map((k) => (
+                <div key={k} className="flex items-center gap-2 text-xs">
+                  <span className="w-20 shrink-0 text-muted">{BREAKDOWN_LABEL[k]}</span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-panel-2">
+                    <div
+                      className={`h-full rounded-full ${subTone(breakdown[k])}`}
+                      style={{ width: `${breakdown[k]}%` }}
+                    />
+                  </div>
+                  <span className="w-7 shrink-0 text-right tabular-nums text-ink">
+                    {Math.round(breakdown[k])}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )

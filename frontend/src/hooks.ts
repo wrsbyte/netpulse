@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './lib/api'
-import type { Range } from './lib/types'
+import type { Range, RawQuery } from './lib/types'
 import { useUi } from './store'
 
 const REFRESH_MS = 15_000
@@ -65,6 +65,27 @@ export const useFlows = (range: Range) => {
 
 export const useNetworks = () =>
   useQuery({ queryKey: ['networks'], queryFn: api.networks, refetchInterval: REFRESH_MS })
+
+export const useHops = (range: Range) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['hops', range, network],
+    queryFn: () => api.hops(range, network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
+export const useRawTables = () => useQuery({ queryKey: ['rawTables'], queryFn: api.rawTables })
+
+export const useRaw = (name: string, range: Range, query: RawQuery) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['raw', name, range, network, query],
+    queryFn: () => api.raw(name, range, network, query),
+    refetchInterval: REFRESH_MS,
+    placeholderData: (prev) => prev, // keep the table visible while re-querying on filter/sort
+  })
+}
 
 export function useSpeedtest() {
   const qc = useQueryClient()

@@ -30,11 +30,13 @@ export function Kpi({
   value,
   tone = 'default',
   hint,
+  title,
 }: {
   label: string
   value: string
   tone?: 'default' | 'ok' | 'warn' | 'danger'
   hint?: string
+  title?: string
 }) {
   const toneClass = {
     default: 'text-ink',
@@ -43,7 +45,7 @@ export function Kpi({
     danger: 'text-danger',
   }[tone]
   return (
-    <div className="rounded-lg border border-border bg-panel-2 px-3 py-2">
+    <div className="rounded-lg border border-border bg-panel-2 px-3 py-2" title={title}>
       <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
       <div className={`text-lg font-semibold tabular-nums ${toneClass}`}>{value}</div>
       {hint && <div className="text-[11px] text-muted">{hint}</div>}

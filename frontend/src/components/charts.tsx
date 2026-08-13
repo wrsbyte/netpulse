@@ -1,7 +1,7 @@
 import type { EChartsOption } from 'echarts'
 import { useActive, useSeries } from '../hooks'
 import { useUi } from '../store'
-import { baseOption, lineSeries } from '../lib/echarts'
+import { baseOption, lineSeries, thresholdSeries } from '../lib/echarts'
 import { colorFor } from '../lib/format'
 import { Chart } from './Chart'
 import { Panel } from './ui'
@@ -11,12 +11,15 @@ export function LatencyChart() {
   const { data, isLoading } = useSeries('ping.rtt_avg', range)
   const option: EChartsOption = {
     yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} ms' } },
-    series: lineSeries(data?.series ?? [], true),
+    series: [
+      ...lineSeries(data?.series ?? [], true),
+      ...thresholdSeries([{ y: 150, label: 'sluggish > 150 ms', color: '#f87171' }]),
+    ],
   }
   return (
     <Panel
       title="Latency by target"
-      subtitle="RTT per hop — shaded band = min–max spread (aggregated ranges)"
+      subtitle="Round-trip time per target, in ms · lower is better · good < 30 · sluggish > 150. Band = min–max."
     >
       <Chart option={option} loading={isLoading} height={240} />
     </Panel>
@@ -28,10 +31,16 @@ export function LossChart() {
   const { data, isLoading } = useSeries('ping.loss_pct', range)
   const option: EChartsOption = {
     yAxis: { ...baseOption.yAxis, max: 100, axisLabel: { formatter: '{value}%' } },
-    series: lineSeries(data?.series ?? []),
+    series: [
+      ...lineSeries(data?.series ?? []),
+      ...thresholdSeries([{ y: 20, label: 'bad > 20%', color: '#f87171' }]),
+    ],
   }
   return (
-    <Panel title="Packet loss" subtitle="% lost per target — 100% on all internet targets = outage">
+    <Panel
+      title="Packet loss"
+      subtitle="% of ping packets lost per target · 0 is perfect · > 2 hurts · 100 on all internet targets = outage"
+    >
       <Chart option={option} loading={isLoading} height={200} />
     </Panel>
   )
@@ -74,12 +83,13 @@ export function WifiChart() {
         lineStyle: { color: '#34d399', width: 1.5 },
         itemStyle: { color: '#34d399' },
       },
+      ...thresholdSeries([{ y: -72, label: 'weak < -72 dBm', color: '#fbbf24' }]),
     ],
   }
   return (
     <Panel
       title="WiFi radio"
-      subtitle="Signal vs link rate — signal dropping while retries climb = radio, not ISP"
+      subtitle="Signal in dBm (closer to 0 = stronger; strong > -60, weak < -72) vs TX link rate in Mbps"
     >
       <Chart option={option} loading={signal.isLoading} height={200} />
     </Panel>
@@ -117,7 +127,10 @@ export function ThroughputChart() {
     ],
   }
   return (
-    <Panel title="Interface throughput" subtitle="Live RX/TX on the uplink (Mb/s)">
+    <Panel
+      title="Interface throughput"
+      subtitle="Live data rate on the WiFi uplink, in megabits/second (Mb/s) · download vs upload"
+    >
       <Chart option={option} loading={rx.isLoading} height={200} />
     </Panel>
   )
@@ -128,12 +141,15 @@ export function DnsChart() {
   const { data, isLoading } = useSeries('dns.query_ms', range)
   const option: EChartsOption = {
     yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} ms' } },
-    series: lineSeries(data?.series ?? []),
+    series: [
+      ...lineSeries(data?.series ?? []),
+      ...thresholdSeries([{ y: 300, label: 'slow > 300 ms', color: '#f87171' }]),
+    ],
   }
   return (
     <Panel
       title="DNS resolution time"
-      subtitle="Per resolver — a slow/failing resolver feels like 'no internet'"
+      subtitle="Time to resolve a name, in ms, per resolver · good < 50 · slow > 300 · a failing resolver feels like 'no internet'"
     >
       <Chart option={option} loading={isLoading} height={200} />
     </Panel>
@@ -177,7 +193,7 @@ export function ActiveChart() {
   return (
     <Panel
       title="Active bandwidth & bufferbloat"
-      subtitle="Speedtest history — added latency under load is the meeting/gaming killer"
+      subtitle="Speedtest — download/upload in Mbps (bars); latency added under load in ms (line) · < 30 ms = grade A"
     >
       <Chart option={option} loading={isLoading} height={200} />
     </Panel>

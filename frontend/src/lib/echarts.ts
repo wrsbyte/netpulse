@@ -1,4 +1,4 @@
-import type { EChartsOption } from 'echarts'
+import type { EChartsOption, SeriesOption } from 'echarts'
 import type { Point, Series } from './types'
 import { colorFor } from './format'
 
@@ -26,14 +26,47 @@ export const baseOption: EChartsOption = {
   },
 }
 
+// A dashed horizontal reference line (e.g. "sluggish > 150 ms") so good/bad is visible.
+export interface Threshold {
+  y: number
+  label: string
+  color: string
+  yAxisIndex?: number
+}
+
+export function thresholdSeries(thresholds: Threshold[]): SeriesOption[] {
+  return [
+    {
+      type: 'line',
+      data: [],
+      silent: true,
+      markLine: {
+        symbol: 'none',
+        lineStyle: { type: 'dashed', width: 1 },
+        data: thresholds.map((t) => ({
+          yAxis: t.y,
+          yAxisIndex: t.yAxisIndex ?? 0,
+          lineStyle: { color: t.color },
+          label: {
+            formatter: t.label,
+            color: t.color,
+            position: 'insideEndTop',
+            fontSize: 10,
+          },
+        })),
+      },
+    },
+  ]
+}
+
 type Pair = [number, number | null]
 
 const toPairs = (points: Point[], key: keyof Point = 'avg'): Pair[] =>
   points.map((p) => [p.ts * 1000, p[key] as number | null])
 
 // A line per series tag; if points carry mn/mx, draw a translucent band behind it.
-export function lineSeries(series: Series[], withBand = false): EChartsOption['series'] {
-  const out: NonNullable<EChartsOption['series']> = []
+export function lineSeries(series: Series[], withBand = false): SeriesOption[] {
+  const out: SeriesOption[] = []
   for (const s of series) {
     const color = colorFor(s.tag)
     if (withBand && s.points.some((p) => p.mn != null && p.mx != null)) {

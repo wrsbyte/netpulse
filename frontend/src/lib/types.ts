@@ -79,6 +79,56 @@ export interface Verdict {
   findings: Finding[]
 }
 
+export interface RawColumn {
+  name: string
+  type: 'number' | 'string' | 'bool' | 'time'
+  unit: string | null
+  values: string[] | null
+}
+
+export interface RawAgg {
+  column: string
+  count: number
+  min: number | null
+  max: number | null
+  avg: number | null
+  p95: number | null
+}
+
+export interface RawPage {
+  columns: RawColumn[]
+  rows: Record<string, unknown>[]
+  total: number
+  agg: RawAgg[]
+}
+
+export interface RawQuery {
+  q?: string
+  sort?: string
+  dir?: 'asc' | 'desc'
+  filters?: Record<string, string>
+  limit: number
+  offset: number
+}
+
+export interface HopPoint {
+  ts: number
+  loss_pct: number | null
+  rtt_ms: number | null
+}
+
+export interface HopSeries {
+  hop: number
+  host: string | null
+  avg_loss: number
+  points: HopPoint[]
+}
+
+export interface HopTimeline {
+  target: string
+  hops: HopSeries[]
+}
+
 export interface Status {
   online: boolean
   current_rtt: number | null

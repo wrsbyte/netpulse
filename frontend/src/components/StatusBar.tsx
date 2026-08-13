@@ -28,33 +28,39 @@ export function StatusBar() {
         value={data ? (data.online ? 'Online' : 'Offline') : '—'}
         tone={data ? (data.online ? 'ok' : 'danger') : 'default'}
         hint={data?.wifi_ssid ?? undefined}
+        title="Whether any internet target is reachable right now"
       />
       <Kpi
         label="Latency"
         value={fmt.ms(data?.current_rtt)}
         hint={`iface ${data?.interface ?? '—'}`}
+        title="Current best round-trip time to the internet (ms) · good < 30 · sluggish > 150 · lower is better"
       />
       <Kpi
         label="Loss"
         value={fmt.pct(data?.current_loss)}
         tone={lossTone(data?.current_loss ?? null)}
+        title="Ping packets lost right now (%) · 0 is perfect · > 2 hurts · 100 = down"
       />
       <Kpi
         label="WiFi signal"
         value={fmt.dbm(data?.wifi_signal_dbm)}
         tone={signalTone(data?.wifi_signal_dbm ?? null)}
         hint={data?.wifi_bitrate ? `${fmt.bitrate(data.wifi_bitrate)} link` : undefined}
+        title="Radio signal strength (dBm; closer to 0 is stronger) · strong > -60 · weak < -72"
       />
       <Kpi
         label="Quality (MOS)"
         value={fmt.mos(data?.latest_mos)}
         hint={data?.latest_grade ? `bufferbloat ${data.latest_grade}` : undefined}
+        title="Mean Opinion Score, call quality 1 (bad) to 5 (excellent); ≥ 4 is good"
       />
       <Kpi
         label="Outages"
         value={data ? String(data.outages_in_range) : '—'}
         tone={data && data.outages_in_range > 0 ? 'warn' : 'default'}
         hint={data?.public_ipv4 ?? undefined}
+        title="Count of full outages in the selected range (all internet targets down at once)"
       />
     </div>
   )
