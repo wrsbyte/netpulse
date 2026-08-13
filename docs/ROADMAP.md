@@ -37,6 +37,21 @@ The flagship. Turn measurements into an attributed conclusion.
   verdict, evidence tables, per-hop path, annotated charts, methodology — something you send
   to the ISP. *(L)*
 
+### N. Network identity & multi-network analysis (P0) 🚩 foundational
+
+The PC is not always on the same network (home / office / café). Without a network dimension,
+their samples mix and every conclusion is wrong when you move. This underpins A and B.
+
+- **N1** Detect the current network by a robust **fingerprint** — gateway MAC (survives DHCP
+  IP changes) + SSID/BSSID + interface; wired vs wireless. *(M)*
+- **N2** First-class `network` identity + tag **every** sample with `network_id`; per-network
+  rollups. *(M)*
+- **N3** **Network-change events** ("switched from Home to Office at 09:12") and editable
+  labels per network. *(S)*
+- **N4** **Per-network views & verdict**: a network selector (default = current) so the
+  dashboard, tables, score and verdict are all scoped to one network — or "all". *(M)*
+- **N5** Cross-network comparison ("Home vs Office: which is worse, and how"). *(M)*
+
 ### B. Data science & scientific rigor (P0/P1)
 
 Make the analysis defensible, not eyeballed.
