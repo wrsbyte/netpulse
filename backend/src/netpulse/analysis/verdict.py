@@ -10,10 +10,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from netpulse.analysis.attribute import Attribution
 from netpulse.analysis.score import HealthInputs, HealthScore, health
 
 _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2, "ok": 3}
 _WEAK_SIGNAL_DBM = -72.0
+_LAYER_LABEL = {
+    "wifi-radio": "your WiFi radio",
+    "lan-gateway": "your router / LAN",
+    "isp": "the ISP path",
+    "internet": "the internet path",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +39,8 @@ class WindowStats:
     wifi_retries_max: int | None = None
     dns_fail: int = 0
     dns_total: int = 0
+    attribution: Attribution | None = None
+    loss_retry_corr: float | None = None
     window_label: str = ""
 
 
@@ -62,6 +71,15 @@ def conclude(stats: WindowStats) -> Verdict:
         )
     )
     findings: list[Finding] = []
+
+    if stats.attribution and stats.attribution.layer != "none":
+        a = stats.attribution
+        has_loss = stats.outage_count > 0 or (stats.loss or 0) >= 2
+        findings.append(Finding(
+            "error" if has_loss else "info",
+            f"Loss localized to {_LAYER_LABEL.get(a.layer, a.layer)}",
+            f"{a.reason} (confidence: {a.confidence}).",
+        ))
 
     if stats.outage_count:
         cause = _attribute_outage(stats)
@@ -98,13 +116,14 @@ def conclude(stats: WindowStats) -> Verdict:
             "move closer or change channel.",
         ))
 
-    if stats.dns_total and stats.dns_fail:
+    if stats.dns_total:
         rate = 100 * stats.dns_fail / stats.dns_total
-        findings.append(Finding(
-            "warning" if rate < 10 else "error",
-            "DNS failures",
-            f"{stats.dns_fail}/{stats.dns_total} lookups failed ({rate:.1f}%).",
-        ))
+        if rate >= 2:  # a handful of timeouts is normal; only flag a real failure rate
+            findings.append(Finding(
+                "warning" if rate < 10 else "error",
+                "DNS failures",
+                f"{stats.dns_fail}/{stats.dns_total} lookups failed ({rate:.1f}%).",
+            ))
 
     if not findings:
         findings.append(Finding("ok", "Network healthy", "No outages, loss or DNS issues."))
@@ -114,6 +133,8 @@ def conclude(stats: WindowStats) -> Verdict:
 
 
 def _attribute_outage(stats: WindowStats) -> str:
+    if stats.attribution and stats.attribution.layer != "none":
+        return _LAYER_LABEL.get(stats.attribution.layer, stats.attribution.layer)
     if stats.worst_outage_cause == "wifi/lan" or not _wifi_healthy(stats):
         return "your WiFi / local link"
     if stats.worst_outage_cause == "isp":
