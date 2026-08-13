@@ -30,20 +30,20 @@ class Attribution:
 
 
 def _first_persistent_loss(hops: list[HopStat]) -> HopStat | None:
-    """First hop whose loss is real: it and the final hop both exceed the threshold.
+    """Where real loss begins: the start of the contiguous lossy run that reaches the
+    destination. Loss must persist from that hop through to the end — a single mid-path hop
+    above threshold sitting before a clean stretch is an ICMP-rate-limit artifact and is
+    ignored, and loss only at the destination with a clean path is return-path noise.
 
-    Loss shown at a single middle hop but not at the destination is an ICMP-rate-limit
-    artifact, not a path problem — only end-to-end loss that *starts* at a hop counts.
+    (Per-hop loss is averaged over many 3-cycle mtr runs, so the 5% threshold is meaningful
+    despite each single run quantizing loss to 0/33/67/100%.)
     """
-    if not hops:
+    if not hops or hops[-1].loss_pct < _LOSS_THRESHOLD:
         return None
-    end_loss = hops[-1].loss_pct
-    if end_loss < _LOSS_THRESHOLD:
-        return None
-    for hop in hops:
-        if hop.loss_pct >= _LOSS_THRESHOLD:
-            return hop
-    return None
+    start = len(hops) - 1
+    while start - 1 >= 0 and hops[start - 1].loss_pct >= _LOSS_THRESHOLD:
+        start -= 1
+    return hops[start]
 
 
 def attribute(

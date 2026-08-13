@@ -28,13 +28,16 @@ def parse_ookla(data: dict[str, Any], ts: float) -> ActiveTest:
     up_lat = data["upload"].get("latency", {}).get("iqm", idle)
     loaded = max(down_lat, up_lat)
     bloat, grade = bufferbloat_grade(idle, loaded)
+    # MOS reflects a call held *while* other traffic runs: use the loaded latency and the
+    # measured loss, not idle-with-zero-loss (which would contradict a bad bufferbloat grade).
+    loss = float(data.get("packetLoss", 0.0) or 0.0)
     return ActiveTest(
         ts=ts,
         download_mbps=data["download"]["bandwidth"] * 8 / 1e6,
         upload_mbps=data["upload"]["bandwidth"] * 8 / 1e6,
         idle_latency=idle, down_latency=down_lat, up_latency=up_lat,
         bufferbloat_ms=bloat, grade=grade,
-        mos=mos(idle, data["ping"].get("jitter", 0.0), 0.0),
+        mos=mos(loaded, data["ping"].get("jitter", 0.0), loss),
     )
 
 

@@ -32,3 +32,10 @@ def test_loss_starting_beyond_gateway_is_isp() -> None:
     assert a.layer == "isp"
     assert a.hop == 3
     assert a.host == "hop3"
+
+
+def test_mid_spike_before_clean_stretch_is_not_the_origin() -> None:
+    # Hop 2 spikes (artifact) then hops 3 is clean; real loss persists from hop 4 to the end.
+    a = attribute(_path(0, 40, 0, 12, 14), loss_retry_corr=0.1, wifi_weak=False)
+    assert a.layer == "isp"
+    assert a.hop == 4  # not hop 2

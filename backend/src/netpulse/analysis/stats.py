@@ -26,6 +26,31 @@ def pearson(xs: list[float], ys: list[float]) -> float | None:
     return float(cov / (vx**0.5 * vy**0.5))
 
 
+def _ranks(values: list[float]) -> list[float]:
+    """Fractional ranks (ties share the average rank) — the basis for Spearman."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        shared = (i + j) / 2 + 1
+        for k in range(i, j + 1):
+            ranks[order[k]] = shared
+        i = j + 1
+    return ranks
+
+
+def spearman(xs: list[float], ys: list[float]) -> float | None:
+    """Rank correlation — robust to non-linearity and the heavy-tailed count data we correlate
+    (loss vs retry-rate), where Pearson's linearity/normality assumptions don't hold."""
+    n = min(len(xs), len(ys))
+    if n < 2:
+        return None
+    return pearson(_ranks(xs[:n]), _ranks(ys[:n]))
+
+
 def ewma(values: list[float], alpha: float = 0.3) -> float | None:
     """Exponentially-weighted moving average (recent-weighted baseline)."""
     if not values:
