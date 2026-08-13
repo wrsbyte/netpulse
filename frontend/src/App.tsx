@@ -1,5 +1,6 @@
 import { Header } from './components/Header'
 import { StatusBar } from './components/StatusBar'
+import { VerdictPanel } from './components/VerdictPanel'
 import {
   ActiveChart,
   DnsChart,
@@ -14,6 +15,7 @@ export default function App() {
   return (
     <div className="mx-auto max-w-7xl space-y-4 p-4 lg:p-6">
       <Header />
+      <VerdictPanel />
       <StatusBar />
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="lg:col-span-2">

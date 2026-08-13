@@ -49,6 +49,36 @@ export interface FlowOut {
   conns: number
 }
 
+export interface NetworkInfo {
+  id: number
+  label: string | null
+  ssid: string | null
+  gateway_ip: string | null
+  gateway_mac: string | null
+  interface: string | null
+  first_seen: number
+  last_seen: number
+  is_current: boolean
+}
+
+export interface Score {
+  score: number
+  grade: string
+  breakdown: Record<string, number>
+}
+
+export interface Finding {
+  severity: 'error' | 'warning' | 'info' | 'ok'
+  title: string
+  detail: string
+}
+
+export interface Verdict {
+  score: Score
+  headline: string
+  findings: Finding[]
+}
+
 export interface Status {
   online: boolean
   current_rtt: number | null

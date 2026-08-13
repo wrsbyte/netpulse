@@ -1,4 +1,5 @@
 import { useSpeedtest } from '../hooks'
+import { NetworkSelector } from './NetworkSelector'
 import { RangeSelector } from './RangeSelector'
 
 export function Header() {
@@ -10,7 +11,8 @@ export function Header() {
         <h1 className="text-lg font-semibold text-ink">netpulse</h1>
         <span className="text-xs text-muted">local network health</span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <NetworkSelector />
         <button
           onClick={() => speedtest.mutate()}
           disabled={speedtest.isPending}

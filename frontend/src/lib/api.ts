@@ -1,4 +1,13 @@
-import type { ActivePoint, EventOut, FlowOut, Range, SeriesResponse, Status } from './types'
+import type {
+  ActivePoint,
+  EventOut,
+  FlowOut,
+  NetworkInfo,
+  Range,
+  SeriesResponse,
+  Status,
+  Verdict,
+} from './types'
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`)
@@ -6,13 +15,18 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// Every data call is scoped to a network ("current" | "all" | numeric id).
+const q = (range: Range, network: string) => `range=${range}&network=${network}`
+
 export const api = {
-  status: (range: Range) => get<Status>(`/status?range=${range}`),
-  series: (metric: string, range: Range) =>
-    get<SeriesResponse>(`/series?metric=${metric}&range=${range}`),
-  active: (range: Range) => get<ActivePoint[]>(`/active?range=${range}`),
-  events: (range: Range) => get<EventOut[]>(`/events?range=${range}`),
-  flows: (range: Range) => get<FlowOut[]>(`/flows?range=${range}`),
+  networks: () => get<NetworkInfo[]>('/networks'),
+  status: (range: Range, network: string) => get<Status>(`/status?${q(range, network)}`),
+  verdict: (range: Range, network: string) => get<Verdict>(`/verdict?${q(range, network)}`),
+  series: (metric: string, range: Range, network: string) =>
+    get<SeriesResponse>(`/series?metric=${metric}&${q(range, network)}`),
+  active: (range: Range, network: string) => get<ActivePoint[]>(`/active?${q(range, network)}`),
+  events: (range: Range, network: string) => get<EventOut[]>(`/events?${q(range, network)}`),
+  flows: (range: Range, network: string) => get<FlowOut[]>(`/flows?${q(range, network)}`),
   runSpeedtest: async (): Promise<ActivePoint> => {
     const res = await fetch('/api/actions/speedtest', { method: 'POST' })
     if (!res.ok) throw new Error(`speedtest failed (${res.status})`)
