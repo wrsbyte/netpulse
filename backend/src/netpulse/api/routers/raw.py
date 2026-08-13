@@ -96,15 +96,30 @@ def _query(
     _, window = window_for(range)
     if sort is not None and sort not in {s.name for s in specs}:
         raise HTTPException(400, f"cannot sort by {sort!r}")
+    filters = _parse_filters(f)
+    _validate_filters(filters, specs)
     rq = RawQuery(
         window=window,
         network_id=resolve_network(session, network),
         q=q or None,
-        filters=_parse_filters(f),
+        filters=filters,
         sort=sort,
         descending=dir != "asc",
     )
     return model, specs, rq
+
+
+def _validate_filters(filters: dict[str, str], specs: list[ColSpec]) -> None:
+    by_name = {s.name: s for s in specs}
+    for col, val in filters.items():
+        spec = by_name.get(col)
+        if spec is None:
+            raise HTTPException(400, f"unknown filter column {col!r}")
+        if spec.type == "number":
+            try:
+                float(val)
+            except ValueError:
+                raise HTTPException(400, f"{col} filter must be a number, got {val!r}") from None
 
 
 @router.get("/tables", response_model=list[str])

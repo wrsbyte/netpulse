@@ -18,6 +18,7 @@ _FREQ = re.compile(r"freq:\s*(\d+)")
 _SIGNAL = re.compile(r"signal:\s*(-?\d+)")
 _TX_BITRATE = re.compile(r"tx bitrate:\s*([\d.]+)")
 _RX_BITRATE = re.compile(r"rx bitrate:\s*([\d.]+)")
+_TX_PACKETS = re.compile(r"tx packets:\s*(\d+)")
 _TX_RETRIES = re.compile(r"tx retries:\s*(\d+)")
 _TX_FAILED = re.compile(r"tx failed:\s*(\d+)")
 _NOISE = re.compile(r"\[in use\].*?noise:\s*(-?\d+)", re.DOTALL)
@@ -51,6 +52,7 @@ async def sample(ts: float, iface: str) -> WifiRaw | None:
         noise_dbm=_f(_NOISE, survey.stdout),
         tx_bitrate=_f(_TX_BITRATE, station.stdout),
         rx_bitrate=_f(_RX_BITRATE, station.stdout),
+        tx_packets=_i(_TX_PACKETS, station.stdout),
         tx_retries=_i(_TX_RETRIES, station.stdout),
         tx_failed=_i(_TX_FAILED, station.stdout),
     )

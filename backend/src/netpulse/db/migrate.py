@@ -20,14 +20,22 @@ def _columns(conn: object, table: str) -> set[str]:
     return {r[1] for r in rows}
 
 
+# Columns added to existing tables after their initial ship (table, column, SQL type, index?).
+_ADDED_COLUMNS: tuple[tuple[str, str, str, bool], ...] = (
+    *((t, "network_id", "INTEGER", True) for t in _NETWORK_SCOPED_TABLES),
+    ("wifi_raw", "tx_packets", "INTEGER", False),
+)
+
+
 def ensure_network_columns(engine: Engine) -> None:
     with engine.begin() as conn:
         rows = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
         existing = {r[0] for r in rows}
-        for table in _NETWORK_SCOPED_TABLES:
-            if table not in existing or "network_id" in _columns(conn, table):
+        for table, column, sql_type, indexed in _ADDED_COLUMNS:
+            if table not in existing or column in _columns(conn, table):
                 continue
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN network_id INTEGER"))
-            conn.execute(
-                text(f"CREATE INDEX IF NOT EXISTS ix_{table}_network_id ON {table}(network_id)")
-            )
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+            if indexed:
+                conn.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS ix_{table}_{column} ON {table}({column})")
+                )

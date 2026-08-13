@@ -65,6 +65,7 @@ class WifiRaw(NetworkScoped, Base):
     noise_dbm: Mapped[float | None] = mapped_column(Float)
     tx_bitrate: Mapped[float | None] = mapped_column(Float)
     rx_bitrate: Mapped[float | None] = mapped_column(Float)
+    tx_packets: Mapped[int | None] = mapped_column(Integer)  # cumulative; for retry-rate ratios
     tx_retries: Mapped[int | None] = mapped_column(Integer)
     tx_failed: Mapped[int | None] = mapped_column(Integer)
 

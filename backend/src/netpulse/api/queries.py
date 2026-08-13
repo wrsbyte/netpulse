@@ -18,7 +18,7 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from netpulse.aggregation import SOURCES
 from netpulse.analysis.attribute import HopStat, attribute
-from netpulse.analysis.stats import pearson
+from netpulse.analysis.stats import spearman
 from netpulse.analysis.verdict import WindowStats
 from netpulse.api.schemas import (
     ActivePoint,
@@ -263,7 +263,8 @@ def _raw_conditions(
     if rq.q:
         text_cols = [getattr(model, s.name) for s in specs if s.type == "string"]
         if text_cols:
-            conds.append(or_(*[c.ilike(f"%{rq.q}%") for c in text_cols]))
+            esc = rq.q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conds.append(or_(*[c.ilike(f"%{esc}%", escape="\\") for c in text_cols]))
     for col, val in (rq.filters or {}).items():
         spec = next((s for s in specs if s.name == col), None)
         if spec is None:
@@ -291,8 +292,12 @@ def raw_rows(
     names = [s.name for s in specs]
     sort_col = getattr(model, rq.sort) if rq.sort in names else model.ts  # type: ignore[attr-defined]
     order = sort_col.desc() if rq.descending else sort_col.asc()
+    # id is the stable tiebreaker: without it, ties on ts let OFFSET skip/repeat rows.
     stmt: Select[Any] = (
-        select(model).where(*_raw_conditions(model, specs, rq)).order_by(order).offset(offset)
+        select(model)
+        .where(*_raw_conditions(model, specs, rq))
+        .order_by(order, model.id.desc())  # type: ignore[attr-defined]
+        .offset(offset)
     )
     if limit is not None:
         stmt = stmt.limit(limit)
@@ -336,24 +341,40 @@ def _column_meta(
     return RawColumn(name=spec.name, type=spec.type, unit=spec.unit, values=values)
 
 
+_P95_SAMPLE_CAP = 20_000  # p95 over the most-recent N values; count/min/max/avg are exact
+
+
 def _raw_aggregates(
     session: Session, model: type, specs: list[ColSpec], conds: list[ColumnElement[bool]]
 ) -> list[RawAgg]:
     numeric = [s for s in specs if s.type == "number"]
     if not numeric:
         return []
-    cols = [getattr(model, s.name) for s in numeric]
-    rows = session.execute(select(*cols).where(*conds)).all()
+    # Exact count/min/max/avg pushed to SQL (O(1) memory), one round-trip for all columns.
+    agg_exprs: list[Any] = []
+    for spec in numeric:
+        col = getattr(model, spec.name)
+        agg_exprs += [func.count(col), func.min(col), func.max(col), func.avg(col)]
+    summary = session.execute(select(*agg_exprs).where(*conds)).one()
+
     out: list[RawAgg] = []
     for i, spec in enumerate(numeric):
-        vals = [float(r[i]) for r in rows if r[i] is not None]
+        count, mn, mx, avg = summary[i * 4 : i * 4 + 4]
+        col = getattr(model, spec.name)
+        sample = session.scalars(
+            select(col)
+            .where(*conds, col.is_not(None))
+            .order_by(model.ts.desc())  # type: ignore[attr-defined]
+            .limit(_P95_SAMPLE_CAP)
+        ).all()
+        p95 = percentile([float(v) for v in sample], 95) if sample else None
         out.append(RawAgg(
             column=spec.name,
-            count=len(vals),
-            min=min(vals) if vals else None,
-            max=max(vals) if vals else None,
-            avg=round(sum(vals) / len(vals), 2) if vals else None,
-            p95=round(percentile(vals, 95), 2) if vals else None,
+            count=int(count or 0),
+            min=float(mn) if mn is not None else None,
+            max=float(mx) if mx is not None else None,
+            avg=round(float(avg), 2) if avg is not None else None,
+            p95=round(p95, 2) if p95 is not None else None,
         ))
     return out
 
@@ -414,11 +435,17 @@ def hop_stats(
     ]
 
 
+_MIN_CORR_BUCKETS = 6  # too few buckets → correlation isn't trustworthy, report None
+
+
 def _loss_retry_corr(
     session: Session, hosts: set[str], start: float, network_id: int | None
 ) -> float | None:
-    """Correlate per-bucket internet loss with WiFi retry-rate (delta of the cumulative
-    counter within the bucket) — a strong link points the finger at the radio."""
+    """Rank-correlate per-bucket internet loss with the WiFi **retry ratio**
+    (Δretries / Δtx-packets within the bucket). A raw retry-count delta would just track how
+    much traffic was sent; the ratio is a real rate. Buckets spanning a counter reset/roam
+    (Δ<0 or no traffic) are dropped, and Spearman (not Pearson) suits the heavy-tailed data.
+    Returns None below a minimum bucket count so a chance correlation can't flip attribution."""
     pings = session.scalars(
         select(PingRaw).where(
             PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
@@ -430,16 +457,26 @@ def _loss_retry_corr(
     loss_by_b: dict[int, list[float]] = {}
     for p in pings:
         loss_by_b.setdefault(int(p.ts) // _CORR_BUCKET, []).append(p.loss_pct)
-    retry_by_b: dict[int, list[int]] = {}
+    retries_by_b: dict[int, list[int]] = {}
+    packets_by_b: dict[int, list[int]] = {}
     for w in wifis:
-        if w.tx_retries is not None:
-            retry_by_b.setdefault(int(w.ts) // _CORR_BUCKET, []).append(w.tx_retries)
+        if w.tx_retries is not None and w.tx_packets is not None:
+            b = int(w.ts) // _CORR_BUCKET
+            retries_by_b.setdefault(b, []).append(w.tx_retries)
+            packets_by_b.setdefault(b, []).append(w.tx_packets)
+
     xs: list[float] = []
     ys: list[float] = []
-    for b in sorted(set(loss_by_b) & set(retry_by_b)):
+    for b in sorted(set(loss_by_b) & set(retries_by_b)):
+        d_retries = max(retries_by_b[b]) - min(retries_by_b[b])
+        d_packets = max(packets_by_b[b]) - min(packets_by_b[b])
+        if d_retries < 0 or d_packets <= 0:  # counter reset / roam / no traffic
+            continue
         xs.append(sum(loss_by_b[b]) / len(loss_by_b[b]))
-        ys.append(float(max(retry_by_b[b]) - min(retry_by_b[b])))
-    return pearson(xs, ys)
+        ys.append(d_retries / d_packets)
+    if len(xs) < _MIN_CORR_BUCKETS:
+        return None
+    return spearman(xs, ys)
 
 
 def gather_stats(
@@ -455,7 +492,6 @@ def gather_stats(
             PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
         )
     ).all()
-    losses = [p.loss_pct for p in pings]
     rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
     jitters = [p.jitter for p in pings if p.jitter is not None]
 
@@ -463,9 +499,13 @@ def gather_stats(
     for p in pings:
         per_target.setdefault(p.target, []).append(p.loss_pct)
     worst_target = None
+    worst_loss_p95 = None
     if per_target:
         host, vals = max(per_target.items(), key=lambda kv: sum(kv[1]) / len(kv[1]))
         worst_target = (host, sum(vals) / len(vals))
+        # Score input = the worst path's p95 loss, so bursty drops (the real symptom) surface
+        # instead of being averaged away across a mostly-healthy window.
+        worst_loss_p95 = max(percentile(v, 95) for v in per_target.values())
 
     outages = session.scalars(
         select(Event).where(
@@ -501,9 +541,9 @@ def gather_stats(
     attribution = attribute(hops, corr, wifi_weak=signal_avg is not None and signal_avg <= -72)
 
     return WindowStats(
-        loss=sum(losses) / len(losses) if losses else None,
+        loss=worst_loss_p95,
         latency=percentile(rtts, 95) if rtts else None,
-        jitter=sum(jitters) / len(jitters) if jitters else None,
+        jitter=percentile(jitters, 95) if jitters else None,
         bufferbloat=latest_active.bufferbloat_ms if latest_active else None,
         availability=max(0.0, 100 * (1 - downtime / window)) if window else None,
         outage_count=len(outages),

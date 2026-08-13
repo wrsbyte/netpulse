@@ -25,12 +25,17 @@ _OPS: dict[str, Callable[[float, float], bool]] = {
 _SOURCE_BY_NAME = {s.name: s for s in SOURCES}
 
 
-def _window_avg(session: Session, metric: str, start: float) -> float | None:
+def _window_avg(
+    session: Session, metric: str, start: float, network_id: int | None
+) -> float | None:
     source = _SOURCE_BY_NAME.get(metric)
     if source is None:
         return None
     model = source.model
-    rows = session.scalars(select(model).where(model.ts >= start)).all()  # type: ignore[attr-defined]
+    scope = [model.network_id == network_id] if network_id is not None else []  # type: ignore[attr-defined]
+    rows = session.scalars(
+        select(model).where(model.ts >= start, *scope)  # type: ignore[attr-defined]
+    ).all()
     values = [v for r in rows if (v := getattr(r, source.value_attr)) is not None]
     return sum(values) / len(values) if values else None
 
@@ -46,16 +51,18 @@ async def _notify(title: str, body: str) -> None:
         await shell.run("notify-send", "-a", "netpulse", title, body, timeout=4)
 
 
-async def evaluate(session: Session, alerts: list[Alert], now: float) -> None:
+async def evaluate(
+    session: Session, alerts: list[Alert], now: float, network_id: int | None = None
+) -> None:
     for alert in alerts:
-        avg = _window_avg(session, alert.metric, now - alert.for_seconds)
+        avg = _window_avg(session, alert.metric, now - alert.for_seconds, network_id)
         breached = avg is not None and _OPS[alert.op](avg, alert.value)
         existing = _open_alert(session, alert.name)
 
         if breached and existing is None:
             session.add(Event(
                 ts=now, end_ts=None, kind="alert", severity="warning",
-                detail=alert.name,
+                detail=alert.name, network_id=network_id,
             ))
             await _notify("netpulse alert", f"{alert.name}: {alert.metric}={avg:.1f}")
         elif not breached and existing is not None:

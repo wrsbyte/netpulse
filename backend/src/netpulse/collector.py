@@ -43,6 +43,8 @@ from netpulse.shell import run as shrun
 
 log = get_logger("collector")
 
+_OUTAGE_CYCLES = 3  # consecutive all-internet-down ping cycles before an outage is declared
+
 
 class Collector:
     def __init__(self, settings: Settings, config: NetpulseConfig) -> None:
@@ -52,6 +54,7 @@ class Collector:
         self.scheduler = AsyncIOScheduler()
         self._last_bssid: str | None = None
         self._network_id: int | None = None
+        self._outage_streak = 0
 
     async def start(self) -> None:
         if not self.iface:
@@ -157,7 +160,7 @@ class Collector:
         with _session() as s:
             run_rollups(s, self.config.retention, now)
         with _session() as s:
-            await alerts.evaluate(s, self.config.alerts, now)
+            await alerts.evaluate(s, self.config.alerts, now, self._network_id)
 
     # --- derived events ----------------------------------------------------
 
@@ -165,14 +168,16 @@ class Collector:
         by_host = {r.target: r for r in results}
         internet = [t for t in self.config.targets if t.kind in ("internet", "site", "work")]
         gateway = [t for t in self.config.targets if t.kind == "lan"]
-        down = internet and all(by_host[t.host].loss_pct >= 100 for t in internet)
+        down = bool(internet) and all(by_host[t.host].loss_pct >= 100 for t in internet)
+        # Require several consecutive failing cycles so one Wi-Fi hiccup doesn't flap an outage.
+        self._outage_streak = self._outage_streak + 1 if down else 0
         open_event = _open_event(s, "outage")
-        if down and open_event is None:
+        if self._outage_streak >= _OUTAGE_CYCLES and open_event is None:
             gw_down = any(by_host[t.host].loss_pct >= 100 for t in gateway)
             cause = "wifi/lan" if gw_down else "isp"
             s.add(Event(ts=now, end_ts=None, kind="outage", severity="error", detail=cause,
                         network_id=self._network_id))
-            log.warning("outage started", cause=cause)
+            log.warning("outage started", cause=cause, cycles=self._outage_streak)
         elif not down and open_event is not None:
             open_event.end_ts = now
             log.info("outage cleared", duration=round(now - open_event.ts, 1))
