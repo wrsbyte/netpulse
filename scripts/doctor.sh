@@ -30,7 +30,9 @@ check notify-send  optional "desktop alert notifications"
 
 echo
 echo "Passwordless sudo for mtr (optional):"
-if sudo -n mtr --help >/dev/null 2>&1; then
+# Probe the exact invocation the sudoers rule allows (report/cycles 3), against loopback.
+if command -v mtr >/dev/null 2>&1 &&
+   sudo -n mtr -n --report --report-cycles 3 127.0.0.1 >/dev/null 2>&1; then
   echo -e "  \033[32m✓\033[0m mtr runs without a password (per-hop loss enabled)"
 else
   echo -e "  \033[33m•\033[0m not configured — install scripts/sudoers.d/netpulse to enable per-hop loss"
