@@ -48,3 +48,8 @@ export function colorFor(tag: string): string {
   for (let i = 0; i < tag.length; i++) hash = (hash * 31 + tag.charCodeAt(i)) & 0xffff
   return PALETTE[hash % PALETTE.length]
 }
+
+// Distinct colour by position — use within a single chart so lines never collide.
+export function colorAt(index: number): string {
+  return PALETTE[index % PALETTE.length]
+}

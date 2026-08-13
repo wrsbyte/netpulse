@@ -2,7 +2,6 @@ import type { EChartsOption } from 'echarts'
 import { useActive, useSeries } from '../hooks'
 import { useUi } from '../store'
 import { baseOption, lineSeries, thresholdSeries } from '../lib/echarts'
-import { colorFor } from '../lib/format'
 import { Chart } from './Chart'
 import { Panel } from './ui'
 
@@ -10,10 +9,14 @@ export function LatencyChart() {
   const range = useUi((s) => s.range)
   const { data, isLoading } = useSeries('ping.rtt_avg', range)
   const option: EChartsOption = {
+    legend: { ...baseOption.legend, data: (data?.series ?? []).map((s) => s.tag) },
     yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} ms' } },
     series: [
       ...lineSeries(data?.series ?? [], true),
-      ...thresholdSeries([{ y: 150, label: 'sluggish > 150 ms', color: '#f87171' }]),
+      ...thresholdSeries([
+        { y: 30, label: 'good < 30 ms', color: '#34d399' },
+        { y: 150, label: 'sluggish > 150 ms', color: '#f87171' },
+      ]),
     ],
   }
   return (
@@ -30,10 +33,14 @@ export function LossChart() {
   const range = useUi((s) => s.range)
   const { data, isLoading } = useSeries('ping.loss_pct', range)
   const option: EChartsOption = {
+    legend: { ...baseOption.legend, data: (data?.series ?? []).map((s) => s.tag) },
     yAxis: { ...baseOption.yAxis, max: 100, axisLabel: { formatter: '{value}%' } },
     series: [
-      ...lineSeries(data?.series ?? []),
-      ...thresholdSeries([{ y: 20, label: 'bad > 20%', color: '#f87171' }]),
+      ...lineSeries(data?.series ?? [], true),
+      ...thresholdSeries([
+        { y: 2, label: 'hurts > 2%', color: '#fbbf24' },
+        { y: 20, label: 'bad > 20%', color: '#f87171' },
+      ]),
     ],
   }
   return (
@@ -61,7 +68,7 @@ export function WifiChart() {
         axisLabel: { formatter: '{value}' },
         splitLine: { lineStyle: { color: '#1a2432' } },
       },
-      { type: 'value', name: 'Mbps', position: 'right', splitLine: { show: false } },
+      { type: 'value', position: 'right', splitLine: { show: false } },
     ],
     series: [
       {
@@ -140,10 +147,14 @@ export function DnsChart() {
   const range = useUi((s) => s.range)
   const { data, isLoading } = useSeries('dns.query_ms', range)
   const option: EChartsOption = {
+    legend: { ...baseOption.legend, data: (data?.series ?? []).map((s) => s.tag) },
     yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} ms' } },
     series: [
-      ...lineSeries(data?.series ?? []),
-      ...thresholdSeries([{ y: 300, label: 'slow > 300 ms', color: '#f87171' }]),
+      ...lineSeries(data?.series ?? [], true),
+      ...thresholdSeries([
+        { y: 50, label: 'good < 50 ms', color: '#34d399' },
+        { y: 300, label: 'slow > 300 ms', color: '#f87171' },
+      ]),
     ],
   }
   return (
@@ -164,20 +175,22 @@ export function ActiveChart() {
     legend: { ...baseOption.legend, data: ['download', 'upload', 'bufferbloat (ms)'] },
     yAxis: [
       { type: 'value', name: 'Mbps', splitLine: { lineStyle: { color: '#1a2432' } } },
-      { type: 'value', name: 'ms', position: 'right', splitLine: { show: false } },
+      { type: 'value', position: 'right', splitLine: { show: false } },
     ],
     series: [
       {
         name: 'download',
         type: 'bar',
+        barMaxWidth: 24,
         data: rows.map((r) => [r.ts * 1000, r.download_mbps]),
-        itemStyle: { color: colorFor('download') },
+        itemStyle: { color: '#38bdf8' },
       },
       {
         name: 'upload',
         type: 'bar',
+        barMaxWidth: 24,
         data: rows.map((r) => [r.ts * 1000, r.upload_mbps]),
-        itemStyle: { color: colorFor('upload') },
+        itemStyle: { color: '#34d399' },
       },
       {
         name: 'bufferbloat (ms)',

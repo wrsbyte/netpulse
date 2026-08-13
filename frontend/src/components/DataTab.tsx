@@ -163,18 +163,29 @@ export function DataTab() {
       <div className={`overflow-x-auto transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
               {columns.map((c) => (
-                <th key={c.name} className="whitespace-nowrap pb-1 pr-3 font-medium">
+                <th
+                  key={c.name}
+                  scope="col"
+                  aria-sort={
+                    sort?.col === c.name
+                      ? sort.dir === 'desc'
+                        ? 'descending'
+                        : 'ascending'
+                      : 'none'
+                  }
+                  className="sticky top-0 whitespace-nowrap border-b border-border bg-panel pb-1 pr-3 font-medium"
+                >
                   <button
                     onClick={() => toggleSort(c.name)}
                     className="inline-flex items-center gap-1 hover:text-ink"
                     title={`Sort by ${c.name}`}
                   >
                     {c.name}
-                    {c.unit && <span className="normal-case text-muted/70">({c.unit})</span>}
+                    {c.unit && <span className="normal-case text-muted">({c.unit})</span>}
                     <span className="text-accent">
-                      {sort?.col === c.name ? (sort.dir === 'desc' ? '↓' : '↑') : ''}
+                      {sort?.col === c.name ? (sort.dir === 'desc' ? '↓' : '↑') : '↕'}
                     </span>
                   </button>
                 </th>
@@ -223,6 +234,7 @@ export function DataTab() {
             </tfoot>
           )}
         </table>
+        {!data && <p className="py-6 text-center text-sm text-muted">Loading…</p>}
         {data && data.rows.length === 0 && (
           <p className="py-6 text-center text-sm text-muted">
             No rows match {activeFilters > 0 ? 'these filters' : 'this range'}.

@@ -9,10 +9,12 @@ const TABS: { key: Tab; label: string }[] = [
 export function Tabs() {
   const { tab, setTab } = useUi()
   return (
-    <nav className="flex gap-1 border-b border-border">
+    <nav role="tablist" aria-label="Views" className="flex gap-1 border-b border-border">
       {TABS.map((t) => (
         <button
           key={t.key}
+          role="tab"
+          aria-selected={tab === t.key}
           onClick={() => setTab(t.key)}
           className={`-mb-px border-b-2 px-3 py-2 text-sm transition ${
             tab === t.key

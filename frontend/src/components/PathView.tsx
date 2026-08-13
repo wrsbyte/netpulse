@@ -14,11 +14,28 @@ function heat(loss: number | null): string {
   return '#c23a3a'
 }
 
+// Where real loss begins: start of the contiguous lossy run reaching the destination (mirrors
+// the backend attribution). A clean destination means any mid-hop loss is an ICMP artifact.
 function firstLossHop(hops: HopSeries[]): number | null {
   const end = hops[hops.length - 1]
-  if (!end || end.avg_loss < 5) return null // clean destination -> mid-hop loss is ICMP artifact
-  return hops.find((h) => h.avg_loss >= 5)?.hop ?? null
+  if (!end || end.avg_loss < 5) return null
+  let start = hops.length - 1
+  while (start - 1 >= 0 && hops[start - 1].avg_loss >= 5) start--
+  return hops[start].hop
 }
+
+function avgRtt(h: HopSeries): number | null {
+  const vals = h.points.map((p) => p.rtt_ms).filter((v): v is number => v != null)
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+}
+
+const HEAT_LEGEND = [
+  { c: '#1a3a2a', t: '0%' },
+  { c: '#2f6b3f', t: '<5%' },
+  { c: '#b58a1b', t: '<20%' },
+  { c: '#c25a2a', t: '<50%' },
+  { c: '#c23a3a', t: '≥50%' },
+]
 
 export function PathView() {
   const range = useUi((s) => s.range)
@@ -39,13 +56,33 @@ export function PathView() {
         </p>
       ) : (
         <div className="overflow-x-auto">
+          <div className="mb-2 flex items-center gap-2 text-[11px] text-muted">
+            <span className="uppercase tracking-wide">Loss legend:</span>
+            {HEAT_LEGEND.map((h) => (
+              <span key={h.t} className="inline-flex items-center gap-1">
+                <span className="h-3 w-3 rounded-[2px]" style={{ background: h.c }} />
+                {h.t}
+              </span>
+            ))}
+          </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                <th className="pb-1 pr-2 font-medium">Hop</th>
-                <th className="pb-1 pr-2 font-medium">Host</th>
-                <th className="pb-1 pr-3 text-right font-medium">Avg loss</th>
-                <th className="pb-1 font-medium">Loss over time →</th>
+                <th scope="col" className="pb-1 pr-2 font-medium">
+                  Hop
+                </th>
+                <th scope="col" className="pb-1 pr-2 font-medium">
+                  Host
+                </th>
+                <th scope="col" className="pb-1 pr-3 text-right font-medium">
+                  Avg RTT (ms)
+                </th>
+                <th scope="col" className="pb-1 pr-3 text-right font-medium">
+                  Avg loss (%)
+                </th>
+                <th scope="col" className="pb-1 font-medium">
+                  Loss over time →
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -59,6 +96,9 @@ export function PathView() {
                         loss starts here
                       </span>
                     )}
+                  </td>
+                  <td className="py-1 pr-3 text-right tabular-nums text-muted">
+                    {fmt.msFine(avgRtt(h))}
                   </td>
                   <td
                     className={`py-1 pr-3 text-right tabular-nums ${

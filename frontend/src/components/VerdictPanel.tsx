@@ -9,11 +9,12 @@ function gradeTone(grade: string): string {
   return 'text-danger border-danger/40 bg-danger/10'
 }
 
-const SEV_DOT: Record<Finding['severity'], string> = {
-  error: 'bg-danger',
-  warning: 'bg-warn',
-  info: 'bg-accent',
-  ok: 'bg-ok',
+// Severity conveyed by label + colour + icon (never colour alone — WCAG).
+const SEVERITY: Record<Finding['severity'], { text: string; icon: string; label: string }> = {
+  error: { text: 'text-danger', icon: '✕', label: 'Critical' },
+  warning: { text: 'text-warn', icon: '!', label: 'Warning' },
+  info: { text: 'text-accent', icon: 'i', label: 'Info' },
+  ok: { text: 'text-ok', icon: '✓', label: 'OK' },
 }
 
 // What each sub-score measures + the direction that's better. Score itself is always 0–100.
@@ -34,8 +35,13 @@ function subTone(v: number): string {
 
 export function VerdictPanel() {
   const range = useUi((s) => s.range)
-  const { data, isLoading } = useVerdict(range)
+  const { data, isLoading, isError } = useVerdict(range)
   const breakdown = data?.score.breakdown ?? {}
+  const headline = isError
+    ? 'Cannot reach the collector — is netpulse running?'
+    : isLoading
+      ? 'Analyzing…'
+      : (data?.headline ?? 'No data yet')
 
   return (
     <section className="rounded-xl border border-border bg-panel p-4">
@@ -48,25 +54,31 @@ export function VerdictPanel() {
             title="Overall health grade A+ (best) to F (worst), from the weighted score below"
           >
             <span className="text-3xl leading-none">{data ? data.score.grade : '—'}</span>
-            <span className="mt-0.5 text-[10px] font-normal opacity-70">
+            <span className="mt-0.5 text-[10px] font-normal">
               {data ? `${Math.round(data.score.score)}/100` : ''}
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-ink">
-              {isLoading ? 'Analyzing…' : (data?.headline ?? 'No data yet')}
+            <h2 className={`text-base font-semibold ${isError ? 'text-danger' : 'text-ink'}`}>
+              {headline}
             </h2>
             <ul className="mt-2 space-y-1">
-              {data?.findings.map((f, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm">
-                  <span
-                    className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${SEV_DOT[f.severity]}`}
-                    title={f.severity}
-                  />
-                  <span className="text-ink">{f.title}.</span>
-                  <span className="text-muted">{f.detail}</span>
-                </li>
-              ))}
+              {data?.findings.map((f, i) => {
+                const sev = SEVERITY[f.severity]
+                return (
+                  <li key={i} className="flex items-start gap-2 text-sm">
+                    <span
+                      className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${sev.text}`}
+                      aria-label={sev.label}
+                      title={sev.label}
+                    >
+                      {sev.icon}
+                    </span>
+                    <span className="text-ink">{f.title}.</span>
+                    <span className="text-muted">{f.detail}</span>
+                  </li>
+                )
+              })}
             </ul>
           </div>
         </div>

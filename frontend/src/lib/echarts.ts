@@ -1,9 +1,13 @@
 import type { EChartsOption, SeriesOption } from 'echarts'
 import type { Point, Series } from './types'
-import { colorFor } from './format'
+import { colorAt } from './format'
+
+const reduceMotion =
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
 // Shared dark base every chart spreads over. Kept minimal; charts add axes/series.
 export const baseOption: EChartsOption = {
+  animation: !reduceMotion,
   backgroundColor: 'transparent',
   textStyle: { color: '#8a97ab', fontSize: 11 },
   grid: { left: 48, right: 16, top: 24, bottom: 28 },
@@ -65,10 +69,12 @@ const toPairs = (points: Point[], key: keyof Point = 'avg'): Pair[] =>
   points.map((p) => [p.ts * 1000, p[key] as number | null])
 
 // A line per series tag; if points carry mn/mx, draw a translucent band behind it.
+// Colour is assigned by position so lines within one chart are always visually distinct
+// (hashing the tag collided several targets onto the same yellow).
 export function lineSeries(series: Series[], withBand = false): SeriesOption[] {
   const out: SeriesOption[] = []
-  for (const s of series) {
-    const color = colorFor(s.tag)
+  series.forEach((s, idx) => {
+    const color = colorAt(idx)
     if (withBand && s.points.some((p) => p.mn != null && p.mx != null)) {
       out.push(
         {
@@ -107,6 +113,6 @@ export function lineSeries(series: Series[], withBand = false): SeriesOption[] {
       lineStyle: { color, width: 1.5 },
       itemStyle: { color },
     })
-  }
+  })
   return out
 }
