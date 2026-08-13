@@ -1,0 +1,13 @@
+[Unit]
+Description=netpulse API + dashboard (localhost)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/wrsbyte/netpulse/backend
+ExecStart=%h/Projects/wrsbyte/netpulse/backend/.venv/bin/netpulse-api
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

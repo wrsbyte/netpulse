@@ -1,0 +1,17 @@
+[Unit]
+Description=netpulse collector — network sampling daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/wrsbyte/netpulse/backend
+ExecStart=%h/Projects/wrsbyte/netpulse/backend/.venv/bin/netpulse-collector
+Restart=on-failure
+RestartSec=5
+# Sampling is light; keep it out of the way.
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,9 @@
+# Optional: let netpulse's traceroute probe run mtr with raw sockets (per-hop packet loss)
+# without a password. Everything else runs unprivileged. Scoped to exactly the mtr invocation.
+#
+# Install (review first):
+#   sudo install -m 0440 scripts/sudoers.d/netpulse /etc/sudoers.d/netpulse
+#   sudo visudo -c            # validate
+#
+# Replace `wrsbyte` if your username differs.
+wrsbyte ALL=(root) NOPASSWD: /usr/bin/mtr -n --report --report-cycles 3 *
