@@ -10,18 +10,28 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from netpulse.aggregation import SOURCES
+from netpulse.analysis.attribute import HopStat, attribute
+from netpulse.analysis.stats import pearson
 from netpulse.analysis.verdict import WindowStats
 from netpulse.api.schemas import (
     ActivePoint,
     EventOut,
     FlowOut,
+    HopPoint,
+    HopSeries,
+    HopTimeline,
     NetworkOut,
     Point,
+    RawAgg,
+    RawColumn,
+    RawPage,
     Series,
     SeriesResponse,
     Status,
@@ -36,6 +46,7 @@ from netpulse.db.models import (
     Network,
     PingRaw,
     State,
+    Traceroute,
     WifiRaw,
 )
 from netpulse.quality import percentile
@@ -224,6 +235,213 @@ def status(session: Session, window: int, interface: str, network_id: int | None
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ColSpec:
+    name: str
+    type: str  # "number" | "string" | "bool" | "time"
+    unit: str | None = None
+    enum: bool = False  # offer a distinct-value dropdown filter
+
+
+@dataclass(frozen=True, slots=True)
+class RawQuery:
+    window: int
+    network_id: int | None
+    q: str | None = None
+    filters: dict[str, str] | None = None
+    sort: str | None = None
+    descending: bool = True
+
+
+def _raw_conditions(
+    model: type, specs: list[ColSpec], rq: RawQuery
+) -> list[ColumnElement[bool]]:
+    conds: list[ColumnElement[bool]] = [
+        model.ts >= time.time() - rq.window,  # type: ignore[attr-defined]
+        *_scope(model.network_id, rq.network_id),  # type: ignore[attr-defined]
+    ]
+    if rq.q:
+        text_cols = [getattr(model, s.name) for s in specs if s.type == "string"]
+        if text_cols:
+            conds.append(or_(*[c.ilike(f"%{rq.q}%") for c in text_cols]))
+    for col, val in (rq.filters or {}).items():
+        spec = next((s for s in specs if s.name == col), None)
+        if spec is None:
+            continue
+        conds.append(getattr(model, col) == _coerce(val, spec.type))
+    return conds
+
+
+def _coerce(val: str, col_type: str) -> object:
+    if col_type == "number":
+        return float(val)
+    if col_type == "bool":
+        return val.lower() in ("1", "true", "ok", "yes")
+    return val
+
+
+def raw_rows(
+    session: Session,
+    model: type,
+    specs: list[ColSpec],
+    rq: RawQuery,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, object]]:
+    names = [s.name for s in specs]
+    sort_col = getattr(model, rq.sort) if rq.sort in names else model.ts  # type: ignore[attr-defined]
+    order = sort_col.desc() if rq.descending else sort_col.asc()
+    stmt: Select[Any] = (
+        select(model).where(*_raw_conditions(model, specs, rq)).order_by(order).offset(offset)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return [{n: getattr(r, n) for n in names} for r in session.scalars(stmt).all()]
+
+
+def raw_page(
+    session: Session,
+    model: type,
+    specs: list[ColSpec],
+    rq: RawQuery,
+    limit: int,
+    offset: int,
+) -> RawPage:
+    conds = _raw_conditions(model, specs, rq)
+    # Facet values ignore the row filters (only window+network) so a chosen filter can be changed.
+    base_conds: list[ColumnElement[bool]] = [
+        model.ts >= time.time() - rq.window,  # type: ignore[attr-defined]
+        *_scope(model.network_id, rq.network_id),  # type: ignore[attr-defined]
+    ]
+    total = session.scalar(select(func.count()).select_from(model).where(*conds))
+    rows = raw_rows(session, model, specs, rq, limit, offset)
+    return RawPage(
+        columns=[_column_meta(session, model, s, base_conds) for s in specs],
+        rows=rows,
+        total=int(total or 0),
+        agg=_raw_aggregates(session, model, specs, conds),
+    )
+
+
+def _column_meta(
+    session: Session, model: type, spec: ColSpec, conds: list[ColumnElement[bool]]
+) -> RawColumn:
+    values: list[str] | None = None
+    if spec.enum:
+        col = getattr(model, spec.name)
+        distinct = session.scalars(
+            select(col).where(*conds).distinct().order_by(col).limit(50)
+        ).all()
+        values = [str(v) for v in distinct if v is not None]
+    return RawColumn(name=spec.name, type=spec.type, unit=spec.unit, values=values)
+
+
+def _raw_aggregates(
+    session: Session, model: type, specs: list[ColSpec], conds: list[ColumnElement[bool]]
+) -> list[RawAgg]:
+    numeric = [s for s in specs if s.type == "number"]
+    if not numeric:
+        return []
+    cols = [getattr(model, s.name) for s in numeric]
+    rows = session.execute(select(*cols).where(*conds)).all()
+    out: list[RawAgg] = []
+    for i, spec in enumerate(numeric):
+        vals = [float(r[i]) for r in rows if r[i] is not None]
+        out.append(RawAgg(
+            column=spec.name,
+            count=len(vals),
+            min=min(vals) if vals else None,
+            max=max(vals) if vals else None,
+            avg=round(sum(vals) / len(vals), 2) if vals else None,
+            p95=round(percentile(vals, 95), 2) if vals else None,
+        ))
+    return out
+
+
+def hop_timeline(
+    session: Session, target: str, window: int, network_id: int | None
+) -> HopTimeline:
+    start = time.time() - window
+    rows = session.scalars(
+        select(Traceroute)
+        .where(
+            Traceroute.target == target, Traceroute.ts >= start,
+            *_scope(Traceroute.network_id, network_id),
+        )
+        .order_by(Traceroute.ts)
+    ).all()
+    by_hop: dict[int, list[Traceroute]] = {}
+    host_by_hop: dict[int, str] = {}
+    for r in rows:
+        by_hop.setdefault(r.hop, []).append(r)
+        if r.host:
+            host_by_hop[r.hop] = r.host
+    hops = []
+    for hop, hop_rows in sorted(by_hop.items()):
+        losses = [r.loss_pct for r in hop_rows if r.loss_pct is not None]
+        hops.append(HopSeries(
+            hop=hop,
+            host=host_by_hop.get(hop),
+            avg_loss=sum(losses) / len(losses) if losses else 0.0,
+            points=[HopPoint(ts=r.ts, loss_pct=r.loss_pct, rtt_ms=r.rtt_ms) for r in hop_rows],
+        ))
+    return HopTimeline(target=target, hops=hops)
+
+
+_CORR_BUCKET = 300  # 5-min buckets for aligning loss vs WiFi retry-rate
+
+
+def hop_stats(
+    session: Session, target: str, start: float, network_id: int | None
+) -> list[HopStat]:
+    """Average per-hop loss toward a target over the window (from mtr history)."""
+    rows = session.scalars(
+        select(Traceroute).where(
+            Traceroute.target == target, Traceroute.ts >= start,
+            *_scope(Traceroute.network_id, network_id),
+        )
+    ).all()
+    loss_by_hop: dict[int, list[float]] = {}
+    host_by_hop: dict[int, str] = {}
+    for r in rows:
+        if r.loss_pct is not None:
+            loss_by_hop.setdefault(r.hop, []).append(r.loss_pct)
+        if r.host:
+            host_by_hop[r.hop] = r.host
+    return [
+        HopStat(hop=h, host=host_by_hop.get(h), loss_pct=sum(v) / len(v))
+        for h, v in sorted(loss_by_hop.items())
+    ]
+
+
+def _loss_retry_corr(
+    session: Session, hosts: set[str], start: float, network_id: int | None
+) -> float | None:
+    """Correlate per-bucket internet loss with WiFi retry-rate (delta of the cumulative
+    counter within the bucket) — a strong link points the finger at the radio."""
+    pings = session.scalars(
+        select(PingRaw).where(
+            PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
+        )
+    ).all()
+    wifis = session.scalars(
+        select(WifiRaw).where(WifiRaw.ts >= start, *_scope(WifiRaw.network_id, network_id))
+    ).all()
+    loss_by_b: dict[int, list[float]] = {}
+    for p in pings:
+        loss_by_b.setdefault(int(p.ts) // _CORR_BUCKET, []).append(p.loss_pct)
+    retry_by_b: dict[int, list[int]] = {}
+    for w in wifis:
+        if w.tx_retries is not None:
+            retry_by_b.setdefault(int(w.ts) // _CORR_BUCKET, []).append(w.tx_retries)
+    xs: list[float] = []
+    ys: list[float] = []
+    for b in sorted(set(loss_by_b) & set(retry_by_b)):
+        xs.append(sum(loss_by_b[b]) / len(loss_by_b[b]))
+        ys.append(float(max(retry_by_b[b]) - min(retry_by_b[b])))
+    return pearson(xs, ys)
+
+
 def gather_stats(
     session: Session, window: int, window_label: str, network_id: int | None = None
 ) -> WindowStats:
@@ -276,6 +494,12 @@ def gather_stats(
         .limit(1)
     ).first()
 
+    signal_avg = sum(signals) / len(signals) if signals else None
+    corr = _loss_retry_corr(session, hosts, start, network_id)
+    primary = next((t.host for t in get_config().targets if t.kind == "internet"), None)
+    hops = hop_stats(session, primary, start, network_id) if primary else []
+    attribution = attribute(hops, corr, wifi_weak=signal_avg is not None and signal_avg <= -72)
+
     return WindowStats(
         loss=sum(losses) / len(losses) if losses else None,
         latency=percentile(rtts, 95) if rtts else None,
@@ -287,9 +511,11 @@ def gather_stats(
         worst_outage_s=worst_outage,
         worst_outage_cause=worst_cause,
         worst_target=worst_target,
-        wifi_signal_avg=sum(signals) / len(signals) if signals else None,
+        wifi_signal_avg=signal_avg,
         wifi_retries_max=max(retries) if retries else None,
         dns_fail=dns_fail,
         dns_total=len(dns),
+        attribution=attribution,
+        loss_retry_corr=corr,
         window_label=window_label,
     )

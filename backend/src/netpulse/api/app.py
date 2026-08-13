@@ -13,7 +13,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from netpulse.api.routers import actions, data
+from netpulse.api.routers import actions, data, raw
 from netpulse.config import get_settings
 from netpulse.db.session import init_engine
 from netpulse.logging import configure_logging
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="netpulse", version="0.1.0", lifespan=_lifespan)
     app.include_router(data.router)
     app.include_router(actions.router)
+    app.include_router(raw.router)
 
     dist = get_settings().frontend_dist
     if dist.is_dir():

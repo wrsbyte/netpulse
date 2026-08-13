@@ -84,6 +84,47 @@ class VerdictOut(BaseModel):
     findings: list[FindingOut]
 
 
+class RawAgg(BaseModel):
+    column: str
+    count: int
+    min: float | None
+    max: float | None
+    avg: float | None
+    p95: float | None
+
+
+class RawColumn(BaseModel):
+    name: str
+    type: str  # "number" | "string" | "bool" | "time"
+    unit: str | None
+    values: list[str] | None  # distinct values for enum-style string columns (for filters)
+
+
+class RawPage(BaseModel):
+    columns: list[RawColumn]
+    rows: list[dict[str, object]]
+    total: int
+    agg: list[RawAgg]
+
+
+class HopPoint(BaseModel):
+    ts: float
+    loss_pct: float | None
+    rtt_ms: float | None
+
+
+class HopSeries(BaseModel):
+    hop: int
+    host: str | None
+    avg_loss: float
+    points: list[HopPoint]
+
+
+class HopTimeline(BaseModel):
+    target: str
+    hops: list[HopSeries]
+
+
 class Status(BaseModel):
     online: bool
     current_rtt: float | None

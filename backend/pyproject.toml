@@ -44,7 +44,7 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PL", "ASYNC"]
-ignore = ["PLR2004", "PLR0913"]
+ignore = ["PLR2004", "PLR0913", "PLR0917"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["netpulse"]

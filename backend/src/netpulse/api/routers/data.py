@@ -16,12 +16,13 @@ from sqlalchemy.orm import Session
 from netpulse.aggregation import SOURCES
 from netpulse.analysis.verdict import Verdict, conclude
 from netpulse.api import queries
-from netpulse.api.deps import RANGES, db
+from netpulse.api.deps import db, resolve_network, window_for
 from netpulse.api.schemas import (
     ActivePoint,
     EventOut,
     FindingOut,
     FlowOut,
+    HopTimeline,
     NetworkOut,
     ScoreOut,
     SeriesResponse,
@@ -37,23 +38,6 @@ _RANGE_LABEL = {"6h": "in the last 6h", "24h": "in the last 24h", "7d": "in the 
 Db = Annotated[Session, Depends(db)]
 
 
-def _window(range_key: str) -> tuple[str, int]:
-    if range_key not in RANGES:
-        raise HTTPException(400, f"range must be one of {list(RANGES)}")
-    return RANGES[range_key]
-
-
-def _resolve_network(session: Session, network: str) -> int | None:
-    if network == "all":
-        return None
-    if network == "current":
-        return queries.current_network_id(session)
-    try:
-        return int(network)
-    except ValueError:
-        raise HTTPException(400, "network must be 'current', 'all', or a numeric id") from None
-
-
 @router.get("/series", response_model=SeriesResponse)
 def get_series(
     session: Db,
@@ -63,10 +47,10 @@ def get_series(
 ) -> SeriesResponse:
     if metric not in _METRICS:
         raise HTTPException(400, f"unknown metric; known: {sorted(_METRICS)}")
-    resolution, window = _window(range)
+    resolution, window = window_for(range)
     return queries.series(
         session, metric, range, resolution, window,
-        network_id=_resolve_network(session, network),
+        network_id=resolve_network(session, network),
     )
 
 
@@ -76,8 +60,8 @@ def get_active(
     range: Annotated[str, Query()] = "24h",
     network: Annotated[str, Query()] = "current",
 ) -> list[ActivePoint]:
-    _, window = _window(range)
-    return queries.active_tests(session, window, _resolve_network(session, network))
+    _, window = window_for(range)
+    return queries.active_tests(session, window, resolve_network(session, network))
 
 
 @router.get("/events", response_model=list[EventOut])
@@ -86,8 +70,8 @@ def get_events(
     range: Annotated[str, Query()] = "24h",
     network: Annotated[str, Query()] = "current",
 ) -> list[EventOut]:
-    _, window = _window(range)
-    return queries.events(session, window, _resolve_network(session, network))
+    _, window = window_for(range)
+    return queries.events(session, window, resolve_network(session, network))
 
 
 @router.get("/flows", response_model=list[FlowOut])
@@ -96,8 +80,8 @@ def get_flows(
     range: Annotated[str, Query()] = "6h",
     network: Annotated[str, Query()] = "current",
 ) -> list[FlowOut]:
-    _, window = _window(range)
-    return queries.top_flows(session, window, _resolve_network(session, network))
+    _, window = window_for(range)
+    return queries.top_flows(session, window, resolve_network(session, network))
 
 
 @router.get("/status", response_model=Status)
@@ -106,14 +90,28 @@ def get_status(
     range: Annotated[str, Query()] = "24h",
     network: Annotated[str, Query()] = "current",
 ) -> Status:
-    _, window = _window(range)
+    _, window = window_for(range)
     return queries.status(session, window, get_config().interface or "auto",
-                          _resolve_network(session, network))
+                          resolve_network(session, network))
 
 
 @router.get("/networks", response_model=list[NetworkOut])
 def get_networks(session: Db) -> list[NetworkOut]:
     return queries.networks(session)
+
+
+@router.get("/traceroute/hops", response_model=HopTimeline)
+def get_hops(
+    session: Db,
+    range: Annotated[str, Query()] = "24h",
+    network: Annotated[str, Query()] = "current",
+    target: Annotated[str | None, Query()] = None,
+) -> HopTimeline:
+    _, window = window_for(range)
+    tgt = target or next((t.host for t in get_config().targets if t.kind == "internet"), None)
+    if tgt is None:
+        raise HTTPException(400, "no traceroute target configured")
+    return queries.hop_timeline(session, tgt, window, resolve_network(session, network))
 
 
 @router.get("/verdict", response_model=VerdictOut)
@@ -122,9 +120,9 @@ def get_verdict(
     range: Annotated[str, Query()] = "24h",
     network: Annotated[str, Query()] = "current",
 ) -> VerdictOut:
-    _, window = _window(range)
+    _, window = window_for(range)
     stats = queries.gather_stats(
-        session, window, _RANGE_LABEL.get(range, ""), _resolve_network(session, network)
+        session, window, _RANGE_LABEL.get(range, ""), resolve_network(session, network)
     )
     return to_verdict_out(conclude(stats))
 
