@@ -1,0 +1,91 @@
+# netpulse monitoring plan. Runtime settings (db path, port…) are env vars (NETPULSE_*).
+
+# Uplink interface. Empty = auto-detect from the default route.
+interface = ""
+
+# Each target isolates one layer so an outage can be attributed.
+#   lan      -> the gateway / WiFi link
+#   internet -> public anycast resolvers (is the internet reachable at all?)
+#   site     -> a real website (does name-based traffic work end to end?)
+#   work     -> hosts you actually depend on (watched directly)
+[[targets]]
+label = "gateway"
+host = "192.168.100.1"
+kind = "lan"
+
+[[targets]]
+label = "cloudflare"
+host = "1.1.1.1"
+kind = "internet"
+
+[[targets]]
+label = "google-dns"
+host = "8.8.8.8"
+kind = "internet"
+
+[[targets]]
+label = "quad9"
+host = "9.9.9.9"
+kind = "internet"
+
+[[targets]]
+label = "google"
+host = "google.com"
+kind = "site"
+
+[[targets]]
+label = "titan"
+host = "131.153.202.57"
+kind = "work"
+
+[[targets]]
+label = "demo-node"
+host = "131.153.11.143"
+kind = "work"
+
+[intervals]
+ping = 3
+wifi = 5
+throughput = 3
+dns = 20
+flows = 30
+traceroute = 300
+wifi_scan = 900
+public_ip = 300
+rollup = 300
+
+[active]
+enabled = true
+interval = 3600   # a full speedtest consumes data; run hourly + on demand
+bufferbloat = true
+speedtest = true
+
+[retention]
+raw_hours = 48
+agg5m_days = 14
+agg1h_days = 400
+
+[dns]
+domains = ["google.com", "github.com", "cloudflare.com"]
+resolvers = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+
+[[alerts]]
+name = "sustained packet loss"
+metric = "ping.loss_pct"
+op = ">="
+value = 20
+for_seconds = 300
+
+[[alerts]]
+name = "weak wifi signal"
+metric = "wifi.signal_dbm"
+op = "<="
+value = -75
+for_seconds = 300
+
+[[alerts]]
+name = "slow dns"
+metric = "dns.query_ms"
+op = ">="
+value = 300
+for_seconds = 300

@@ -1,0 +1,238 @@
+"""The sampling daemon.
+
+Schedules every probe on its configured cadence (APScheduler), persists results, and derives
+the discrete events that matter: outages (all internet targets down at once — labelled WiFi vs
+ISP by whether the gateway also failed), AP roaming (BSSID change), and public-IP changes.
+Runs the rollup + alert pass on the rollup cadence. Designed to degrade: a probe that raises is
+logged and skipped, the rest keep sampling.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import re
+import time
+from collections.abc import Awaitable, Callable, Iterator
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from netpulse import alerts
+from netpulse.aggregation import run_rollups
+from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
+from netpulse.db.models import Event, State
+from netpulse.db.session import get_session, init_engine
+from netpulse.logging import configure_logging, get_logger
+from netpulse.probes import (
+    active,
+    dns,
+    flows,
+    ping,
+    public_ip,
+    throughput,
+    traceroute,
+    wifi,
+    wifi_scan,
+)
+from netpulse.shell import run as shrun
+
+log = get_logger("collector")
+
+
+class Collector:
+    def __init__(self, settings: Settings, config: NetpulseConfig) -> None:
+        self.settings = settings
+        self.config = config
+        self.iface = config.interface
+        self.scheduler = AsyncIOScheduler()
+        self._last_bssid: str | None = None
+
+    async def start(self) -> None:
+        if not self.iface:
+            self.iface = await _detect_iface()
+        log.info("starting", iface=self.iface, targets=len(self.config.targets))
+        self._schedule()
+        self.scheduler.start()
+
+    def _schedule(self) -> None:
+        iv = self.config.intervals
+        add = self.scheduler.add_job
+        add(self._guard(self._ping), "interval", seconds=iv.ping)
+        add(self._guard(self._wifi), "interval", seconds=iv.wifi)
+        add(self._guard(self._throughput), "interval", seconds=iv.throughput)
+        add(self._guard(self._dns), "interval", seconds=iv.dns)
+        add(self._guard(self._flows), "interval", seconds=iv.flows)
+        add(self._guard(self._traceroute), "interval", seconds=iv.traceroute)
+        add(self._guard(self._wifi_scan), "interval", seconds=iv.wifi_scan)
+        add(self._guard(self._public_ip), "interval", seconds=iv.public_ip)
+        add(self._guard(self._rollup), "interval", seconds=iv.rollup)
+        if self.config.active.enabled:
+            add(self._guard(self.run_active), "interval", seconds=self.config.active.interval)
+
+    def _guard(self, fn: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
+        async def wrapper() -> None:
+            try:
+                await fn()
+            except Exception:
+                log.exception("probe failed", probe=fn.__name__)
+
+        wrapper.__name__ = fn.__name__
+        return wrapper
+
+    # --- probe jobs --------------------------------------------------------
+
+    async def _ping(self) -> None:
+        now = time.time()
+        results = await asyncio.gather(
+            *(ping.sample(now, t.host) for t in self.config.targets)
+        )
+        with _session() as s:
+            s.add_all(results)
+            self._detect_outage(s, now, results)
+            s.commit()
+
+    async def _wifi(self) -> None:
+        row = await wifi.sample(time.time(), self.iface)
+        if row is None:
+            return
+        with _session() as s:
+            s.add(row)
+            self._detect_roaming(s, row.ts, row.bssid)
+            s.commit()
+
+    async def _throughput(self) -> None:
+        row = await throughput.sample(time.time(), self.iface)
+        if row is not None:
+            self._persist([row])
+
+    async def _dns(self) -> None:
+        now = time.time()
+        jobs = [
+            dns.sample(now, d, r)
+            for d in self.config.dns.domains
+            for r in ["", *self.config.dns.resolvers]
+        ]
+        self._persist(await asyncio.gather(*jobs))
+
+    async def _flows(self) -> None:
+        self._persist(await flows.sample(time.time(), self.iface))
+
+    async def _traceroute(self) -> None:
+        now = time.time()
+        for target in self.config.targets:
+            self._persist(await traceroute.sample(now, target.host))
+
+    async def _wifi_scan(self) -> None:
+        self._persist(await wifi_scan.sample(time.time(), self.iface))
+
+    async def _public_ip(self) -> None:
+        v4, v6 = await public_ip.sample()
+        with _session() as s:
+            for family, value in (("ipv4", v4), ("ipv6", v6)):
+                if value is None:
+                    continue
+                self._track_ip_change(s, family, value)
+            s.commit()
+
+    async def run_active(self) -> None:
+        row = await active.sample(time.time())
+        if row is not None:
+            self._persist([row])
+
+    async def _rollup(self) -> None:
+        now = time.time()
+        with _session() as s:
+            run_rollups(s, self.config.retention, now)
+        with _session() as s:
+            await alerts.evaluate(s, self.config.alerts, now)
+
+    # --- derived events ----------------------------------------------------
+
+    def _detect_outage(self, s: Session, now: float, results: list) -> None:  # type: ignore[type-arg]
+        by_host = {r.target: r for r in results}
+        internet = [t for t in self.config.targets if t.kind in ("internet", "site", "work")]
+        gateway = [t for t in self.config.targets if t.kind == "lan"]
+        down = internet and all(by_host[t.host].loss_pct >= 100 for t in internet)
+        open_event = _open_event(s, "outage")
+        if down and open_event is None:
+            gw_down = any(by_host[t.host].loss_pct >= 100 for t in gateway)
+            cause = "wifi/lan" if gw_down else "isp"
+            s.add(Event(ts=now, end_ts=None, kind="outage", severity="error", detail=cause))
+            log.warning("outage started", cause=cause)
+        elif not down and open_event is not None:
+            open_event.end_ts = now
+            log.info("outage cleared", duration=round(now - open_event.ts, 1))
+
+    def _detect_roaming(self, s: Session, now: float, bssid: str | None) -> None:
+        if bssid and self._last_bssid and bssid != self._last_bssid:
+            s.add(Event(
+                ts=now, end_ts=now, kind="roam", severity="info",
+                detail=f"{self._last_bssid} -> {bssid}",
+            ))
+            log.info("roamed", from_bssid=self._last_bssid, to_bssid=bssid)
+        if bssid:
+            self._last_bssid = bssid
+
+    def _track_ip_change(self, s: Session, family: str, value: str) -> None:
+        key = f"public_{family}"
+        state = s.get(State, key)
+        if state is None:
+            s.add(State(key=key, value=value))
+            return
+        if state.value != value:
+            s.add(Event(
+                ts=time.time(), end_ts=time.time(), kind="ip_change", severity="info",
+                detail=f"{family}: {state.value} -> {value}",
+            ))
+            log.info("public ip changed", family=family, old=state.value, new=value)
+            state.value = value
+
+    def _persist(self, rows: list) -> None:  # type: ignore[type-arg]
+        rows = [r for r in rows if r is not None]
+        if not rows:
+            return
+        with _session() as s:
+            s.add_all(rows)
+            s.commit()
+
+
+@contextlib.contextmanager
+def _session() -> Iterator[Session]:
+    session = get_session()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def _open_event(s: Session, kind: str) -> Event | None:
+    return s.scalars(
+        select(Event).where(Event.kind == kind, Event.end_ts.is_(None))
+    ).first()
+
+
+_ROUTE_DEV = re.compile(r"\bdev\s+(\S+)")
+
+
+async def _detect_iface() -> str:
+    res = await shrun("ip", "route", "get", "1.1.1.1", timeout=4)
+    m = _ROUTE_DEV.search(res.stdout)
+    return m.group(1) if m else "wlan0"
+
+
+async def _run_forever() -> None:
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)  # one line per job is noise
+    init_engine(settings.db_path)
+    collector = Collector(settings, get_config())
+    await collector.start()
+    await asyncio.Event().wait()  # run until killed
+
+
+def main() -> None:
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(_run_forever())
