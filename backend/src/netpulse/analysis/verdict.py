@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from netpulse.analysis.attribute import Attribution
 from netpulse.analysis.score import HealthInputs, HealthScore, health
+from netpulse.analysis.segment import SegmentVerdict
 
 _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2, "ok": 3}
 _WEAK_SIGNAL_DBM = -72.0
@@ -43,6 +44,7 @@ class WindowStats:
     dns_fail: int = 0
     dns_total: int = 0
     attribution: Attribution | None = None
+    segment: SegmentVerdict | None = None
     loss_retry_corr: float | None = None
     # (provider, colo airport, colo country) for CDNs served from an out-of-country POP.
     anycast_out: list[tuple[str, str, str]] = field(default_factory=list)
@@ -132,6 +134,23 @@ def conclude(stats: WindowStats) -> Verdict:
             "Weak WiFi signal",
             f"Average {stats.wifi_signal_avg:.0f} dBm (≤ {_WEAK_SIGNAL_DBM:.0f} is weak); "
             "move closer or change channel.",
+        ))
+
+    seg = stats.segment
+    if seg and seg.layer == "transit" and seg.transit_ms and seg.local_rtt is not None:
+        findings.append(Finding(
+            "info",
+            "Latency is beyond your ISP, in transit",
+            f"your best-peered path is {seg.local_rtt:.0f} ms (access is fine) but the degraded "
+            f"path adds ~{seg.transit_ms:.0f} ms of transit — international routing, not your "
+            "zone; a VPN may route around it.",
+        ))
+    elif seg and seg.layer == "access" and seg.local_rtt is not None:
+        findings.append(Finding(
+            "warning",
+            "Your ISP's access network is slow",
+            f"even your best-peered path is {seg.local_rtt:.0f} ms — the ISP access/backhaul "
+            "itself is heavy, an operator/local-capacity issue a VPN won't fix.",
         ))
 
     for provider, colo, country in stats.anycast_out:

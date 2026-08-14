@@ -19,6 +19,7 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 from netpulse.aggregation import SOURCES
 from netpulse.analysis.attribute import HopStat, attribute
 from netpulse.analysis.diurnal import distinct_days, hourly_cells
+from netpulse.analysis.segment import classify as segment_classify
 from netpulse.analysis.stats import block_bootstrap_ci, gilbert_elliott, spearman
 from netpulse.analysis.verdict import WindowStats
 from netpulse.api.schemas import (
@@ -633,6 +634,15 @@ def gather_stats(
     hops = hop_stats(session, primary, start, network_id) if primary else []
     attribution = attribute(hops, corr, wifi_weak=signal_avg is not None and signal_avg <= -72)
 
+    # Segment split from RELIABLE end-to-end RTTs (not hop RTTs): the best-peered path's median
+    # is the access proxy, the worst path's median is the destination.
+    per_target_rtt: dict[str, list[float]] = {}
+    for p in pings:
+        if p.rtt_avg is not None:
+            per_target_rtt.setdefault(p.target, []).append(p.rtt_avg)
+    medians = [percentile(v, 50) for v in per_target_rtt.values() if v]
+    segment = segment_classify(min(medians), max(medians)) if medians else None
+
     return WindowStats(
         loss=worst_loss_p95,
         loss_ci=loss_ci,
@@ -652,6 +662,7 @@ def gather_stats(
         dns_fail=dns_fail,
         dns_total=len(dns),
         attribution=attribution,
+        segment=segment,
         loss_retry_corr=corr,
         anycast_out=anycast_out,
         window_label=window_label,
