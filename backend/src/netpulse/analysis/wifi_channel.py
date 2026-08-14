@@ -24,6 +24,21 @@ class ChannelAdvice:
     crowded: bool
 
 
+def continuous_hours(samples: list[tuple[float, int | None]], current: int | None) -> float | None:
+    """How long (hours) you've been continuously on ``current``, walking back from the latest
+    sample until the channel changes. ``samples`` are ``(ts, channel)`` ascending by ts. This is
+    what turns "you're on 149" into "you've been stuck on 149 for 8 h" — the actionable part."""
+    if current is None or not samples:
+        return None
+    latest_ts = samples[-1][0]
+    earliest = latest_ts
+    for ts, channel in reversed(samples):
+        if channel != current:
+            break
+        earliest = ts
+    return (latest_ts - earliest) / 3600.0
+
+
 def analyze(current: int | None, scan_channels: list[int]) -> ChannelAdvice:
     counts = Counter(scan_channels)
     on_current = counts.get(current, 0) if current is not None else 0

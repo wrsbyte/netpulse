@@ -17,6 +17,8 @@ from netpulse.analysis.wifi_channel import ChannelAdvice
 
 _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2, "ok": 3}
 _WEAK_SIGNAL_DBM = -72.0
+_OUTLIER_ABS = 3.0  # pp above the typical destination for a target's loss to be a peering outlier
+_OUTLIER_RATIO = 3.0
 _LAYER_LABEL = {
     "wifi-radio": "your WiFi radio",
     "lan-gateway": "your router / LAN",
@@ -27,7 +29,8 @@ _LAYER_LABEL = {
 
 @dataclass(frozen=True, slots=True)
 class WindowStats:
-    loss: float | None = None  # worst path p95 % loss, internet targets
+    loss: float | None = None  # TYPICAL path p95 % loss (median across targets) — the grade input
+    typical_loss: float | None = None  # median across targets of each target's average loss
     loss_ci: tuple[float, float] | None = None  # block-bootstrap 95% CI on worst-path loss
     loss_burst_len: float | None = None  # mean consecutive lossy cycles (bursty vs uniform)
     latency: float | None = None  # p95 RTT ms, internet targets
@@ -44,7 +47,9 @@ class WindowStats:
     wifi_retries_max: int | None = None
     wifi_power_save: bool | None = None
     channel_advice: ChannelAdvice | None = None
+    hours_on_channel: float | None = None  # continuous time on the current 5 GHz channel
     outages_client_initiated: int = 0  # of outage_count, how many were the laptop disconnecting
+    outages_isp: int = 0  # of outage_count, how many had the gateway still reachable (ISP-side)
     dns_fail: int = 0
     dns_total: int = 0
     attribution: Attribution | None = None
@@ -78,6 +83,17 @@ def _wifi_healthy(stats: WindowStats) -> bool:
     return not weak
 
 
+def _is_peering_outlier(stats: WindowStats) -> bool:
+    """The worst destination is much lossier than the typical one → a route/CDN peering issue to
+    that host, not systemic loss. Keeps one badly-peered target from defining the whole verdict."""
+    if stats.worst_target is None or stats.typical_loss is None:
+        return False
+    worst = stats.worst_target[1]
+    return worst >= _OUTLIER_ABS and worst >= max(
+        _OUTLIER_RATIO * stats.typical_loss, stats.typical_loss + _OUTLIER_ABS
+    )
+
+
 def conclude(stats: WindowStats) -> Verdict:
     score = health(
         HealthInputs(
@@ -107,16 +123,14 @@ def conclude(stats: WindowStats) -> Verdict:
         cause = _attribute_outage(stats)
         pct = 100 - stats.availability if stats.availability is not None else None
         pct_txt = f"{pct:.1f}% of the window" if pct is not None else "part of the window"
-        client_txt = (
-            f" ({stats.outages_client_initiated} were your laptop suspending, not the network)"
-            if stats.outages_client_initiated
-            else ""
-        )
+        breakdown = _outage_breakdown(stats)
+        breakdown_txt = f" Breakdown: {breakdown}." if breakdown else ""
+        worst_min = (stats.worst_outage_s or 0) / 60
         findings.append(Finding(
             "error",
             f"Internet unreachable {pct_txt}",
             f"{stats.outage_count} outage(s), {stats.downtime_s / 60:.1f} min total; "
-            f"worst {(stats.worst_outage_s or 0) / 60:.1f} min. Attributed to {cause}{client_txt}.",
+            f"worst {worst_min:.1f} min. Attributed to {cause}.{breakdown_txt}",
         ))
 
     if stats.latency is not None and stats.latency >= 100:
@@ -132,7 +146,16 @@ def conclude(stats: WindowStats) -> Verdict:
             f"p95 RTT {stats.latency:.0f} ms{excess_txt} — pages and calls feel sluggish.",
         ))
 
-    if stats.worst_target and stats.worst_target[1] >= 2:
+    if _is_peering_outlier(stats):
+        host, loss = stats.worst_target  # type: ignore[misc]  # guarded by _is_peering_outlier
+        findings.append(Finding(
+            "info",
+            f"{host} is badly peered on your ISP",
+            f"{loss:.1f}% loss to {host} vs ~{stats.typical_loss:.1f}% to your other "
+            "destinations — a route/CDN peering issue specific to that host, not your whole "
+            "connection. Prefer a better-peered equivalent (e.g. Quad9/Google over Cloudflare).",
+        ))
+    elif stats.worst_target and stats.worst_target[1] >= 2:
         host, loss = stats.worst_target
         ci_txt = ""
         if stats.loss_ci:
@@ -148,31 +171,7 @@ def conclude(stats: WindowStats) -> Verdict:
             f"{loss:.1f}% average loss{ci_txt}{burst_txt} — degrades calls and page loads.",
         ))
 
-    if not _wifi_healthy(stats):
-        findings.append(Finding(
-            "warning",
-            "Weak WiFi signal",
-            f"Average {stats.wifi_signal_avg:.0f} dBm (≤ {_WEAK_SIGNAL_DBM:.0f} is weak); "
-            "move closer or change channel.",
-        ))
-
-    if stats.wifi_power_save:
-        findings.append(Finding(
-            "warning",
-            "WiFi power-save is on",
-            "the adapter's power-saving causes beacon loss and brief drops; disable it "
-            "(NetworkManager wifi.powersave = 2).",
-        ))
-
-    ca = stats.channel_advice
-    if ca and ca.crowded and ca.best_alternative is not None:
-        findings.append(Finding(
-            "warning",
-            f"WiFi channel {ca.current} is crowded",
-            f"{ca.aps_on_current} APs share your 5 GHz channel; switch the router to channel "
-            f"{ca.best_alternative} ({ca.alternative_aps} APs, no DFS).",
-        ))
-
+    findings.extend(_wifi_findings(stats))
     findings.extend(_route_context_findings(stats))
 
     if stats.dns_total:
@@ -189,6 +188,36 @@ def conclude(stats: WindowStats) -> Verdict:
 
     findings.sort(key=lambda f: _SEVERITY_RANK[f.severity])
     return Verdict(score=score, headline=_headline(score, stats, findings), findings=findings)
+
+
+def _wifi_findings(stats: WindowStats) -> list[Finding]:
+    """WiFi-layer findings: weak signal, power-save left on, and a crowded/held channel."""
+    out: list[Finding] = []
+    if not _wifi_healthy(stats):
+        out.append(Finding(
+            "warning", "Weak WiFi signal",
+            f"Average {stats.wifi_signal_avg:.0f} dBm (≤ {_WEAK_SIGNAL_DBM:.0f} is weak); "
+            "move closer or change channel.",
+        ))
+    if stats.wifi_power_save:
+        out.append(Finding(
+            "warning", "WiFi power-save is on",
+            "the adapter's power-saving causes beacon loss and brief drops; disable it "
+            "(NetworkManager wifi.powersave = 2).",
+        ))
+    ca = stats.channel_advice
+    if ca and ca.crowded and ca.best_alternative is not None:
+        stuck_txt = (
+            f" (auto-selected and held for ~{stats.hours_on_channel:.0f} h)"
+            if stats.hours_on_channel is not None and stats.hours_on_channel >= 1
+            else ""
+        )
+        out.append(Finding(
+            "warning", f"WiFi channel {ca.current} is crowded",
+            f"{ca.aps_on_current} APs share your 5 GHz channel{stuck_txt}; switch the router to "
+            f"channel {ca.best_alternative} ({ca.alternative_aps} APs, no DFS).",
+        ))
+    return out
 
 
 def _route_context_findings(stats: WindowStats) -> list[Finding]:
@@ -237,6 +266,22 @@ def _route_context_findings(stats: WindowStats) -> list[Finding]:
             "is flapping (RIPEstat), which adds latency/loss on top of any congestion.",
         ))
     return out
+
+
+def _outage_breakdown(stats: WindowStats) -> str:
+    """Split the outages by where they came from: ISP-side (gateway still reachable), the laptop
+    itself (suspend/power-save), or the WiFi link (RF/channel drop, gateway also gone)."""
+    wifi_link = stats.outage_count - stats.outages_isp
+    laptop = min(stats.outages_client_initiated, wifi_link)
+    rf = wifi_link - laptop
+    parts = []
+    if stats.outages_isp:
+        parts.append(f"{stats.outages_isp} ISP-side (gateway still up)")
+    if laptop:
+        parts.append(f"{laptop} your laptop (suspend/power-save)")
+    if rf:
+        parts.append(f"{rf} WiFi link (RF/channel)")
+    return "; ".join(parts)
 
 
 def _attribute_outage(stats: WindowStats) -> str:

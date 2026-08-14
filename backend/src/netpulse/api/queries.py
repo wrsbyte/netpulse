@@ -26,6 +26,7 @@ from netpulse.analysis.stats import block_bootstrap_ci, gilbert_elliott, spearma
 from netpulse.analysis.verdict import WindowStats
 from netpulse.analysis.wifi_channel import ChannelAdvice
 from netpulse.analysis.wifi_channel import analyze as analyze_channel
+from netpulse.analysis.wifi_channel import continuous_hours as channel_continuous_hours
 from netpulse.api.schemas import (
     ActivePoint,
     AnycastOut,
@@ -50,7 +51,7 @@ from netpulse.api.schemas import (
     SeriesResponse,
     Status,
 )
-from netpulse.config import get_config
+from netpulse.config import Target, get_config
 from netpulse.db.models import (
     ActiveTest,
     Agg,
@@ -643,18 +644,7 @@ def gather_stats(
     per_target: dict[str, list[float]] = {}
     for p in pings:
         per_target.setdefault(p.target, []).append(p.loss_pct)
-    worst_target = None
-    worst_loss_p95 = None
-    loss_ci = None
-    loss_burst = None
-    if per_target:
-        host, vals = max(per_target.items(), key=lambda kv: sum(kv[1]) / len(kv[1]))
-        worst_target = (host, sum(vals) / len(vals))
-        # Score input = the worst path's p95 loss, so bursty drops (the real symptom) surface
-        # instead of being averaged away across a mostly-healthy window.
-        worst_loss_p95 = max(percentile(v, 95) for v in per_target.values())
-        loss_ci = block_bootstrap_ci(vals) if len(vals) > 10 else None
-        _, loss_burst = gilbert_elliott([v > 0 for v in vals])
+    worst_target, typical_loss, typical_loss_p95, loss_ci, loss_burst = _loss_stats(per_target)
 
     # Empirical latency floor: the fastest RTT ever seen on this path is its physical minimum;
     # excess above it is congestion/queuing, not distance (the audit's min-RTT baseline).
@@ -673,6 +663,7 @@ def gather_stats(
     downtime = sum((o.end_ts or now) - max(o.ts, start) for o in outages)
     worst_outage = max(((o.end_ts or now) - o.ts for o in outages), default=None)
     worst_cause = max(outages, key=lambda o: (o.end_ts or now) - o.ts).detail if outages else None
+    outages_isp = sum(1 for o in outages if o.detail == "isp")
 
     wifi = session.scalars(
         select(WifiRaw).where(WifiRaw.ts >= start, *_scope(WifiRaw.network_id, network_id))
@@ -682,6 +673,9 @@ def gather_stats(
     latest_wifi = wifi[-1] if wifi else None
     power_save = latest_wifi.power_save if latest_wifi else None
     channel_advice = _channel_advice(session, latest_wifi, start, network_id)
+    channel_series = [(w.ts, _freq_to_channel(w.freq)) for w in wifi]
+    current_channel = _freq_to_channel(latest_wifi.freq) if latest_wifi else None
+    hours_on_channel = channel_continuous_hours(channel_series, current_channel)
     client_outages = _client_initiated_outages(session, outages, start, network_id)
 
     dns = session.scalars(
@@ -701,7 +695,10 @@ def gather_stats(
     )
     signal_avg = sum(signals) / len(signals) if signals else None
     corr = _loss_retry_corr(session, hosts, start, network_id)
-    primary = next((t.host for t in get_config().targets if t.kind == "internet"), None)
+    # Attribute on the REPRESENTATIVE path (median loss among internet targets), not the first one
+    # in config — otherwise a single badly-peered target defines "the ISP path is lossy" when the
+    # typical path is clean.
+    primary = _representative_target(get_config().targets, per_target)
     hops = hop_stats(session, primary, start, network_id) if primary else []
     attribution = attribute(hops, corr, wifi_weak=signal_avg is not None and signal_avg <= -72)
 
@@ -715,7 +712,8 @@ def gather_stats(
     segment = segment_classify(min(medians), max(medians)) if medians else None
 
     return WindowStats(
-        loss=worst_loss_p95,
+        loss=typical_loss_p95,
+        typical_loss=typical_loss,
         loss_ci=loss_ci,
         loss_burst_len=loss_burst,
         latency=latency_p95,
@@ -732,7 +730,9 @@ def gather_stats(
         wifi_retries_max=max(retries) if retries else None,
         wifi_power_save=power_save,
         channel_advice=channel_advice,
+        hours_on_channel=hours_on_channel,
         outages_client_initiated=client_outages,
+        outages_isp=outages_isp,
         dns_fail=dns_fail,
         dns_total=len(dns),
         attribution=attribution,
@@ -745,6 +745,39 @@ def gather_stats(
         bgp_stable=bgp_stable,
         window_label=window_label,
     )
+
+
+def _loss_stats(
+    per_target: dict[str, list[float]],
+) -> tuple[
+    tuple[str, float] | None, float | None, float | None, tuple[float, float] | None, float | None
+]:
+    """From per-target loss samples: the worst target (host, avg%), the TYPICAL destination's
+    average and p95 loss (median across targets — so one badly-peered CDN can't define the grade),
+    the block-bootstrap CI on the worst path, and its mean loss-burst length."""
+    if not per_target:
+        return (None, None, None, None, None)
+    host, vals = max(per_target.items(), key=lambda kv: sum(kv[1]) / len(kv[1]))
+    worst_target = (host, sum(vals) / len(vals))
+    avg_by_target = {h: sum(v) / len(v) for h, v in per_target.items()}
+    typical_loss = percentile(list(avg_by_target.values()), 50)
+    typical_loss_p95 = percentile([percentile(v, 95) for v in per_target.values()], 50)
+    loss_ci = block_bootstrap_ci(vals) if len(vals) > 10 else None
+    _, loss_burst = gilbert_elliott([v > 0 for v in vals])
+    return (worst_target, typical_loss, typical_loss_p95, loss_ci, loss_burst)
+
+
+def _representative_target(targets: list[Target], per_target: dict[str, list[float]]) -> str | None:
+    """The internet/site target whose average loss is the median — the path a typical connection
+    takes. Falls back to the first internet target when there's no loss data yet."""
+    candidates = [t.host for t in targets if t.kind in ("internet", "site")]
+    with_data = sorted(
+        (h for h in candidates if per_target.get(h)),
+        key=lambda h: sum(per_target[h]) / len(per_target[h]),
+    )
+    if with_data:
+        return with_data[len(with_data) // 2]
+    return candidates[0] if candidates else None
 
 
 def _regional_percentile(session: Session) -> tuple[float | None, float | None]:
