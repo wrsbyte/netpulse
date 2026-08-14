@@ -111,6 +111,7 @@ function FlowQualityPanel() {
                       s.retrans_total ? 'text-warn' : 'text-muted'
                     }`}
                   >
+                    {s.retrans_total ? <span aria-hidden>▲ </span> : ''}
                     {s.retrans_total}
                   </td>
                   <td className="py-1.5 text-right tabular-nums text-muted">

@@ -7,7 +7,7 @@ import { Panel } from './ui'
 
 export function LatencyChart() {
   const range = useUi((s) => s.range)
-  const { data, isLoading } = useSeries('ping.rtt_avg', range)
+  const { data, isLoading, isError } = useSeries('ping.rtt_avg', range)
   const option: EChartsOption = {
     legend: { ...baseOption.legend, data: (data?.series ?? []).map((s) => s.tag) },
     yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} ms' } },
@@ -24,14 +24,14 @@ export function LatencyChart() {
       title="Latency by target"
       subtitle="Round-trip time per target, in ms · lower is better · good < 30 · sluggish > 150. Band = min–max."
     >
-      <Chart option={option} loading={isLoading} height={240} />
+      <Chart option={option} loading={isLoading} error={isError} height={240} />
     </Panel>
   )
 }
 
 export function LossChart() {
   const range = useUi((s) => s.range)
-  const { data, isLoading } = useSeries('ping.loss_pct', range)
+  const { data, isLoading, isError } = useSeries('ping.loss_pct', range)
   const option: EChartsOption = {
     legend: { ...baseOption.legend, data: (data?.series ?? []).map((s) => s.tag) },
     // Auto-scale (no fixed max:100) so real loss of a few % is legible instead of hugging the axis;
@@ -50,7 +50,7 @@ export function LossChart() {
       title="Packet loss"
       subtitle="% of ping packets lost per target · 0 is perfect · > 2 hurts · 100 on all internet targets = outage"
     >
-      <Chart option={option} loading={isLoading} height={200} />
+      <Chart option={option} loading={isLoading} error={isError} height={200} />
     </Panel>
   )
 }
@@ -100,7 +100,7 @@ export function WifiChart() {
       title="WiFi radio"
       subtitle="Signal in dBm (closer to 0 = stronger; strong > -60, weak < -72) vs TX link rate in Mbps"
     >
-      <Chart option={option} loading={signal.isLoading} height={200} />
+      <Chart option={option} loading={signal.isLoading} error={signal.isError} height={200} />
     </Panel>
   )
 }
@@ -140,14 +140,14 @@ export function ThroughputChart() {
       title="Interface throughput"
       subtitle="Live data rate on the WiFi uplink, in megabits/second (Mbps) · download vs upload"
     >
-      <Chart option={option} loading={rx.isLoading} height={200} />
+      <Chart option={option} loading={rx.isLoading} error={rx.isError} height={200} />
     </Panel>
   )
 }
 
 export function DnsChart() {
   const range = useUi((s) => s.range)
-  const { data, isLoading } = useSeries('dns.query_ms', range)
+  const { data, isLoading, isError } = useSeries('dns.query_ms', range)
   const option: EChartsOption = {
     legend: { ...baseOption.legend, data: (data?.series ?? []).map((s) => s.tag) },
     yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} ms' } },
@@ -164,14 +164,14 @@ export function DnsChart() {
       title="DNS resolution time"
       subtitle="Time to resolve a name, in ms, per resolver · good < 50 · slow > 300 · a failing resolver feels like 'no internet'"
     >
-      <Chart option={option} loading={isLoading} height={200} />
+      <Chart option={option} loading={isLoading} error={isError} height={200} />
     </Panel>
   )
 }
 
 export function ActiveChart() {
   const range = useUi((s) => s.range)
-  const { data, isLoading } = useActive(range)
+  const { data, isLoading, isError } = useActive(range)
   const rows = data ?? []
   const option: EChartsOption = {
     legend: { ...baseOption.legend, data: ['download', 'upload', 'bufferbloat (ms)'] },
@@ -210,7 +210,7 @@ export function ActiveChart() {
       title="Active bandwidth & bufferbloat"
       subtitle="Speedtest — download/upload in Mbps (bars); latency added under load in ms (line) · < 30 ms = grade A"
     >
-      <Chart option={option} loading={isLoading} height={200} />
+      <Chart option={option} loading={isLoading} error={isError} height={200} />
     </Panel>
   )
 }

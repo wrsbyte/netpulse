@@ -16,7 +16,16 @@ function fmt(v: number | null, metric: string): string {
 export function SlaPanel() {
   const range = useUi((s) => s.range)
   const { data, isError } = useSla(range)
-  if (isError || !data || !data.configured) return null // no contract set → don't show the card
+  if (isError) {
+    return (
+      <Panel title="Contract vs delivered (SLA)">
+        <p className="py-3 text-center text-sm text-danger">
+          Cannot reach the collector — is netpulse running?
+        </p>
+      </Panel>
+    )
+  }
+  if (!data || !data.configured) return null // no contract configured → don't show the card
   return (
     <Panel
       title="Contract vs delivered (SLA)"

@@ -76,6 +76,7 @@ export function DnsComparePanel() {
                     r.fail_pct >= 5 ? 'text-danger' : r.fail_pct >= 2 ? 'text-warn' : 'text-ok'
                   }`}
                 >
+                  {r.fail_pct >= 2 && <span aria-hidden>▲ </span>}
                   {r.fail_pct.toFixed(1)}%
                 </td>
                 <td className="py-1.5 text-right tabular-nums text-muted">

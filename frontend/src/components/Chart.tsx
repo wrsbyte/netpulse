@@ -7,10 +7,11 @@ interface ChartProps {
   option: EChartsOption
   height?: number
   loading?: boolean
+  error?: boolean
 }
 
 // Thin ECharts wrapper: init once, update option on change, resize with the container.
-export function Chart({ option, height = 220, loading }: ChartProps) {
+export function Chart({ option, height = 220, loading, error }: ChartProps) {
   const ref = useRef<HTMLDivElement>(null)
   const chart = useRef<ReturnType<typeof echarts.init> | null>(null)
 
@@ -36,5 +37,14 @@ export function Chart({ option, height = 220, loading }: ChartProps) {
     else chart.current?.hideLoading()
   }, [loading])
 
-  return <div ref={ref} style={{ height }} className="w-full" />
+  return (
+    <div className="relative">
+      <div ref={ref} style={{ height }} className="w-full" />
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-danger">
+          Cannot reach the collector — is netpulse running?
+        </div>
+      )}
+    </div>
+  )
 }
