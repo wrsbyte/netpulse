@@ -193,6 +193,24 @@ export interface GeoResponse {
   arcs: GeoArc[]
 }
 
+export interface ExperienceMetric {
+  label: string
+  value: number | null
+  unit: string
+  ok: boolean
+}
+
+export interface Activity {
+  activity: string
+  rating: 'good' | 'fair' | 'poor' | 'unknown'
+  summary: string
+  metrics: ExperienceMetric[]
+}
+
+export interface ExperienceResponse {
+  activities: Activity[]
+}
+
 export interface DnsCompareRow {
   resolver: string
   n: number

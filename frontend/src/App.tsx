@@ -1,4 +1,5 @@
 import { DataTab } from './components/DataTab'
+import { ExperiencePanel } from './components/ExperiencePanel'
 import { Header } from './components/Header'
 import { MapTab } from './components/MapTab'
 import { PathView } from './components/PathView'
@@ -21,6 +22,7 @@ function Dashboard() {
   return (
     <>
       <StatusBar />
+      <ExperiencePanel />
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="lg:col-span-2">
           <LatencyChart />

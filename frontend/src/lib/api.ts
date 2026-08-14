@@ -4,6 +4,7 @@ import type {
   DiurnalResponse,
   DnsCompareRow,
   EventOut,
+  ExperienceResponse,
   FlowOut,
   FlowQuality,
   GeoResponse,
@@ -59,6 +60,8 @@ export const api = {
     get<DiurnalResponse>(`/diurnal?metric=${metric}&${q(range, network)}`),
   dnsCompare: (range: Range, network: string) =>
     get<DnsCompareRow[]>(`/dns-compare?${q(range, network)}`),
+  experience: (range: Range, network: string) =>
+    get<ExperienceResponse>(`/experience?${q(range, network)}`),
   rawTables: () => get<string[]>('/raw/tables'),
   raw: (name: string, range: Range, network: string, query: RawQuery) =>
     get<RawPage>(`/raw/${name}?${q(range, network)}&${rawParams(query)}`),

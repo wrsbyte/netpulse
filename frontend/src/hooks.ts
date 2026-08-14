@@ -102,6 +102,15 @@ export const useGeo = () => {
   })
 }
 
+export const useExperience = (range: Range) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['experience', range, network],
+    queryFn: () => api.experience(range, network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
 export const useDnsCompare = (range: Range) => {
   const network = useNetwork()
   return useQuery({

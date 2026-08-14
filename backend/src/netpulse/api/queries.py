@@ -20,6 +20,7 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 from netpulse.aggregation import SOURCES
 from netpulse.analysis.attribute import HopStat, attribute
 from netpulse.analysis.diurnal import distinct_days, hourly_cells
+from netpulse.analysis.experience import ExperienceInputs, assess
 from netpulse.analysis.geo import locate_colo, locate_country
 from netpulse.analysis.segment import classify as segment_classify
 from netpulse.analysis.stats import (
@@ -34,11 +35,13 @@ from netpulse.analysis.wifi_channel import analyze as analyze_channel
 from netpulse.analysis.wifi_channel import continuous_hours as channel_continuous_hours
 from netpulse.api.schemas import (
     ActivePoint,
+    ActivityOut,
     AnycastOut,
     DiurnalCell,
     DiurnalResponse,
     DnsCompareRow,
     EventOut,
+    ExperienceOut,
     FlowOut,
     FlowQualityOut,
     GeoArc,
@@ -47,6 +50,7 @@ from netpulse.api.schemas import (
     HopPoint,
     HopSeries,
     HopTimeline,
+    MetricOut,
     NetworkOut,
     Point,
     RawAgg,
@@ -344,6 +348,59 @@ def dns_compare(
         ))
     out.sort(key=lambda r: r.median_ms if r.median_ms is not None else 1e9)
     return out
+
+
+def experience(session: Session, window: int, network_id: int | None) -> ExperienceOut:
+    """What the connection feels like for calls / browsing / streaming / gaming — plain-language
+    ratings backed by the metrics we already measure."""
+    now = time.time()
+    start = now - window
+    hosts = _internet_hosts()
+    pings = session.scalars(
+        select(PingRaw).where(
+            PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
+        )
+    ).all()
+    rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
+    jitters = [p.jitter for p in pings if p.jitter is not None]
+    per_target: dict[str, list[float]] = {}
+    for p in pings:
+        per_target.setdefault(p.target, []).append(p.loss_pct)
+    typical_loss = (
+        percentile([sum(v) / len(v) for v in per_target.values()], 50) if per_target else None
+    )
+    active = session.scalars(
+        select(ActiveTest)
+        .where(*_scope(ActiveTest.network_id, network_id))
+        .order_by(ActiveTest.ts.desc())
+        .limit(1)
+    ).first()
+    dns = session.scalars(
+        select(DnsRaw).where(
+            DnsRaw.ts >= start, DnsRaw.ok, DnsRaw.query_ms.is_not(None),
+            *_scope(DnsRaw.network_id, network_id),
+        )
+    ).all()
+    dns_ms = percentile([d.query_ms for d in dns if d.query_ms is not None], 50) if dns else None
+
+    inputs = ExperienceInputs(
+        rtt_ms=percentile(rtts, 50) if rtts else None,
+        loss_pct=typical_loss,
+        jitter_ms=percentile(jitters, 95) if jitters else None,
+        bufferbloat_ms=active.bufferbloat_ms if active else None,
+        download_mbps=active.download_mbps if active else None,
+        upload_mbps=active.upload_mbps if active else None,
+        dns_ms=dns_ms,
+    )
+    return ExperienceOut(activities=[
+        ActivityOut(
+            activity=v.activity, rating=v.rating, summary=v.summary,
+            metrics=[
+                MetricOut(label=m.label, value=m.value, unit=m.unit, ok=m.ok) for m in v.metrics
+            ],
+        )
+        for v in assess(inputs)
+    ])
 
 
 def diurnal(

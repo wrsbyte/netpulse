@@ -189,6 +189,24 @@ class GeoResponse(BaseModel):
     arcs: list[GeoArc]
 
 
+class MetricOut(BaseModel):
+    label: str
+    value: float | None
+    unit: str
+    ok: bool
+
+
+class ActivityOut(BaseModel):
+    activity: str
+    rating: str  # good | fair | poor | unknown
+    summary: str
+    metrics: list[MetricOut]
+
+
+class ExperienceOut(BaseModel):
+    activities: list[ActivityOut]
+
+
 class DnsCompareRow(BaseModel):
     resolver: str
     n: int

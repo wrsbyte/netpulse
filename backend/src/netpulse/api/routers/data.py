@@ -23,6 +23,7 @@ from netpulse.api.schemas import (
     DiurnalResponse,
     DnsCompareRow,
     EventOut,
+    ExperienceOut,
     FindingOut,
     FlowOut,
     FlowQualityOut,
@@ -126,6 +127,16 @@ def get_dns_compare(
 ) -> list[DnsCompareRow]:
     _, window = window_for(range)
     return queries.dns_compare(session, window, resolve_network(session, network))
+
+
+@router.get("/experience", response_model=ExperienceOut)
+def get_experience(
+    session: Db,
+    range: Annotated[str, Query()] = "6h",
+    network: Annotated[str, Query()] = "current",
+) -> ExperienceOut:
+    _, window = window_for(range)
+    return queries.experience(session, window, resolve_network(session, network))
 
 
 @router.get("/diurnal", response_model=DiurnalResponse)
