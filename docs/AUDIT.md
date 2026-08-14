@@ -85,3 +85,24 @@ section for the feature work done alongside.
 A4 forensic report, B1 anomaly detection (robust_z), B5 SLA tracking, H3 DoT + IPv6 parity,
 UDP/QUIC media-path probe (real call quality). Verified: `make check` + 6 Playwright e2e +
 `doctor.sh`, all green.
+
+### Round 2b — adversarial statistical re-audit (correctness pass)
+
+A dedicated correctness auditor re-checked the analysis after the round-2 fixes and found three that
+made the tool actively misreport (all now fixed):
+- **SLA uptime false breach.** The prior uptime fix divided full-window downtime by raw-retention
+  covered time (7d numerator, ~48h denominator) → a fabricated live SLA breach. Fixed: cap the
+  uptime window to raw retention so both are the same window, and count only **ISP-side** outages
+  (a local WiFi drop is not the ISP failing to deliver).
+- **Latency-anomaly detector couldn't fire.** It z-scored a cross-target median against a pooled
+  baseline mixing near and far hosts, so the denominator was dominated by distance variance and the
+  threshold needed a total meltdown. Fixed: z-score each target's current p95 against that same
+  target's own 1-h history, take the max — like-vs-like, so a real per-path step-up trips it.
+- **Live-call false positive.** ICMP rate-limiting on a media peer (partial loss) was rated as call
+  loss → "call degraded" on a fine call. Fixed: rate live calls on jitter + RTT only; ICMP loss to a
+  media server is not media loss.
+- Also: transit-vs-access restricted to internet-kind targets (a far work host was permanently
+  mislabeled "international transit"); browsing's "fair" band gained a loss ceiling; the speedtest
+  exclusion window was right-sized (+25 s, recovers by ~17 s). Deferred (low): the availability/loss
+  double-weight in the composite score, and two latent stats helpers (`effective_n` unused,
+  `block_bootstrap_ci` returns range for small n) — both currently inert.
