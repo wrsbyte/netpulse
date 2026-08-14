@@ -59,3 +59,25 @@ test('routes tab shows the CDN and DNS panels', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'DNS resolvers compared' })).toBeVisible()
   expect(errors).toEqual([])
 })
+
+test('routes aggregates traffic by named service, not raw IPs', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Routes' }).click()
+  const table = page.getByRole('table').filter({ hasText: 'Endpoints' })
+  await expect(table).toBeVisible({ timeout: 15_000 })
+  // The service table must have rows and none should be a bare IPv6 literal (the old wall of raw
+  // endpoints). At least one named service (letters) must appear.
+  const firstCol = table.locator('tbody tr td:first-child')
+  await expect(firstCol.first()).toBeVisible()
+  const labels = await firstCol.allInnerTexts()
+  expect(labels.length).toBeGreaterThan(0)
+  expect(labels.some((t) => /[A-Za-z]{3,}/.test(t))).toBe(true)
+  expect(labels.some((t) => t.includes('::'))).toBe(false)
+})
+
+test('experience panel rates the four activities', async ({ page }) => {
+  await page.goto('/')
+  for (const act of ['Video calls', 'Browsing', 'Streaming', 'Gaming']) {
+    await expect(page.getByText(act, { exact: true })).toBeVisible({ timeout: 15_000 })
+  }
+})
