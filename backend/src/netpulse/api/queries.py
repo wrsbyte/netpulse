@@ -663,6 +663,10 @@ def gather_stats(
 
     anycast_out = _anycast_out_of_country(session, start, network_id)
     regional_pct, regional_user_rtt = _regional_percentile(session)
+    bgp_state = session.get(State, "bgp_updates")
+    bgp_stable_state = session.get(State, "bgp_stable")
+    bgp_updates = int(bgp_state.value) if bgp_state else None
+    bgp_stable = (bgp_stable_state.value == "1") if bgp_stable_state else None
     signal_avg = sum(signals) / len(signals) if signals else None
     corr = _loss_retry_corr(session, hosts, start, network_id)
     primary = next((t.host for t in get_config().targets if t.kind == "internet"), None)
@@ -702,6 +706,8 @@ def gather_stats(
         anycast_out=anycast_out,
         regional_pct=regional_pct,
         regional_user_rtt=regional_user_rtt,
+        bgp_updates=bgp_updates,
+        bgp_stable=bgp_stable,
         window_label=window_label,
     )
 

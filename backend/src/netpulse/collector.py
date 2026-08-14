@@ -26,7 +26,7 @@ from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
 from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
 from netpulse.db.models import AnycastPop, Event, Network, RegionalBaseline, State
 from netpulse.db.session import get_session, init_engine
-from netpulse.external import ripe_atlas
+from netpulse.external import ripe_atlas, ripe_stat
 from netpulse.logging import configure_logging, get_logger
 from netpulse.probes import (
     active,
@@ -181,13 +181,22 @@ class Collector:
                 metric="rtt_ms", values_json=json.dumps(rtts), n=len(rtts),
             ))
             if user.rtt_avg is not None:
-                state = s.get(State, "kroot_rtt")
-                if state is None:
-                    s.add(State(key="kroot_rtt", value=str(user.rtt_avg)))
-                else:
-                    state.value = str(user.rtt_avg)
+                self._upsert_state(s, "kroot_rtt", str(user.rtt_avg))
+            public = s.get(State, "public_ipv4")
+            if public is not None:
+                bgp = await ripe_stat.bgp_summary(public.value)
+                if bgp is not None:
+                    self._upsert_state(s, "bgp_updates", str(bgp.total))
+                    self._upsert_state(s, "bgp_stable", "1" if bgp.stable else "0")
             s.commit()
         log.info("regional baseline updated", country="MX", n=len(rtts))
+
+    def _upsert_state(self, s: Session, key: str, value: str) -> None:
+        state = s.get(State, key)
+        if state is None:
+            s.add(State(key=key, value=value))
+        else:
+            state.value = value
 
     async def _anycast(self) -> None:
         rows = await anycast.sample(time.time())

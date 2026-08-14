@@ -50,6 +50,8 @@ class WindowStats:
     anycast_out: list[tuple[str, str, str]] = field(default_factory=list)
     regional_pct: float | None = None  # percentile of your core-net latency within the region
     regional_user_rtt: float | None = None
+    bgp_updates: int | None = None  # recent BGP updates to your prefix (route-stability)
+    bgp_stable: bool | None = None
     window_label: str = ""
 
 
@@ -193,6 +195,13 @@ def _route_context_findings(stats: WindowStats) -> list[Finding]:
             "info", "Regional context (RIPE Atlas)",
             f"your latency to core internet infrastructure ({stats.regional_user_rtt:.0f} ms) is "
             f"at the {stats.regional_pct:.0f}th percentile of your country's probes — {note}.",
+        ))
+
+    if stats.bgp_updates is not None and stats.bgp_stable is False:
+        out.append(Finding(
+            "info", "Unstable BGP route",
+            f"your prefix saw {stats.bgp_updates} BGP updates recently — the global route to you "
+            "is flapping (RIPEstat), which adds latency/loss on top of any congestion.",
         ))
     return out
 
