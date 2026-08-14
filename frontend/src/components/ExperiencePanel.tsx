@@ -60,14 +60,18 @@ function Card({ a }: { a: Activity }) {
 
 export function ExperiencePanel() {
   const range = useUi((s) => s.range)
-  const { data } = useExperience(range)
+  const { data, isError } = useExperience(range)
   const activities = data?.activities ?? []
   return (
     <Panel
       title="What you'll experience"
       subtitle="Plain-language rating per activity, from the metrics measured over the range. Green metric = within the good range for that use; red = the one dragging it down."
     >
-      {activities.length === 0 ? (
+      {isError ? (
+        <p className="py-4 text-center text-sm text-danger">
+          Cannot reach the collector — is netpulse running?
+        </p>
+      ) : activities.length === 0 ? (
         <p className="py-4 text-center text-sm text-muted">Gathering data…</p>
       ) : (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">

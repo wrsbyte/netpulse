@@ -34,7 +34,9 @@ export function LossChart() {
   const { data, isLoading } = useSeries('ping.loss_pct', range)
   const option: EChartsOption = {
     legend: { ...baseOption.legend, data: (data?.series ?? []).map((s) => s.tag) },
-    yAxis: { ...baseOption.yAxis, max: 100, axisLabel: { formatter: '{value}%' } },
+    // Auto-scale (no fixed max:100) so real loss of a few % is legible instead of hugging the axis;
+    // a soft floor keeps the "hurts > 2%" line visible when everything is clean.
+    yAxis: { ...baseOption.yAxis, min: 0, axisLabel: { formatter: '{value}%' } },
     series: [
       ...lineSeries(data?.series ?? [], true),
       ...thresholdSeries([

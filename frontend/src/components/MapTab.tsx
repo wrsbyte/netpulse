@@ -37,7 +37,7 @@ function hopTooltip(h: GeoHop): string {
 }
 
 export function MapTab() {
-  const { data } = useGeo()
+  const { data, isError } = useGeo()
   const ref = useRef<HTMLDivElement>(null)
   const chart = useRef<ReturnType<typeof echarts.init> | null>(null)
 
@@ -147,7 +147,16 @@ export function MapTab() {
       title="Route map"
       subtitle="Where your traffic goes: the geolocated services you talk to (◆ violet), the CDN POPs serving you (● coloured by loss), and your real route (dashed = traceroute hops). Node size ∝ measured RTT; a red ring = routed out of country."
     >
-      <div ref={ref} style={{ height: 460 }} className="w-full" />
+      <div className="relative">
+        <div ref={ref} style={{ height: 460 }} className="w-full" />
+        {(isError || (data && data.points.length === 0)) && (
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-muted">
+            {isError
+              ? 'Cannot reach the collector — is netpulse running?'
+              : 'No geolocated route yet.'}
+          </div>
+        )}
+      </div>
       <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted">
         <span>
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#38bdf8' }} />{' '}

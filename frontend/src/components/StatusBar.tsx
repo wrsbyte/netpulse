@@ -70,7 +70,7 @@ export function StatusBar() {
         label="Outages"
         value={data ? String(data.outages_in_range) : '—'}
         tone={data && data.outages_in_range > 0 ? 'warn' : 'default'}
-        hint={data?.public_ipv4 ?? undefined}
+        hint={data ? 'in range' : undefined}
         title="Count of full outages in the selected range (all internet targets down at once)"
       />
     </div>

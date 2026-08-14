@@ -33,6 +33,36 @@ function subTone(v: number): string {
   return 'bg-danger'
 }
 
+function Finding({ f, prominent = false }: { f: Finding; prominent?: boolean }) {
+  const sev = SEVERITY[f.severity]
+  if (prominent) {
+    return (
+      <div className="flex items-start gap-2">
+        <span
+          className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${sev.text}`}
+          aria-label={sev.label}
+          title={sev.label}
+        >
+          {sev.icon}
+        </span>
+        <div className="min-w-0">
+          <div className={`text-sm font-semibold ${sev.text}`}>{f.title}</div>
+          <div className="text-sm text-muted">{f.detail}</div>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <span className={`shrink-0 font-bold ${sev.text}`} aria-label={sev.label} title={sev.label}>
+        {sev.icon}
+      </span>
+      <span className="text-ink">{f.title}.</span>
+      <span className="text-muted">{f.detail}</span>
+    </div>
+  )
+}
+
 export function VerdictPanel() {
   const range = useUi((s) => s.range)
   const { data, isLoading, isError } = useVerdict(range)
@@ -62,24 +92,34 @@ export function VerdictPanel() {
             <h2 className={`text-base font-semibold ${isError ? 'text-danger' : 'text-ink'}`}>
               {headline}
             </h2>
-            <ul className="mt-2 space-y-1">
-              {data?.findings.map((f, i) => {
-                const sev = SEVERITY[f.severity]
-                return (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <span
-                      className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${sev.text}`}
-                      aria-label={sev.label}
-                      title={sev.label}
-                    >
-                      {sev.icon}
-                    </span>
-                    <span className="text-ink">{f.title}.</span>
-                    <span className="text-muted">{f.detail}</span>
-                  </li>
-                )
-              })}
-            </ul>
+            {(() => {
+              const findings = data?.findings ?? []
+              const primary = findings.filter(
+                (f) => f.severity === 'error' || f.severity === 'warning',
+              )
+              const secondary = findings.filter((f) => f.severity === 'info' || f.severity === 'ok')
+              return (
+                <>
+                  <div className="mt-2 space-y-2">
+                    {primary.map((f, i) => (
+                      <Finding key={i} f={f} prominent />
+                    ))}
+                  </div>
+                  {secondary.length > 0 && (
+                    <details className="mt-2 group">
+                      <summary className="cursor-pointer text-xs text-muted hover:text-ink">
+                        {primary.length > 0 ? `${secondary.length} more observations` : 'Details'} ▸
+                      </summary>
+                      <div className="mt-2 space-y-1">
+                        {secondary.map((f, i) => (
+                          <Finding key={i} f={f} />
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>
 
