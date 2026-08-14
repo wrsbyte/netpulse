@@ -15,6 +15,7 @@ import type {
   RawQuery,
   SeriesResponse,
   ServiceQuality,
+  SlaReport,
   Status,
   Verdict,
 } from './types'
@@ -65,6 +66,7 @@ export const api = {
     get<DnsCompareRow[]>(`/dns-compare?${q(range, network)}`),
   experience: (range: Range, network: string) =>
     get<ExperienceResponse>(`/experience?${q(range, network)}`),
+  sla: (range: Range, network: string) => get<SlaReport>(`/sla?${q(range, network)}`),
   rawTables: () => get<string[]>('/raw/tables'),
   raw: (name: string, range: Range, network: string, query: RawQuery) =>
     get<RawPage>(`/raw/${name}?${q(range, network)}&${rawParams(query)}`),

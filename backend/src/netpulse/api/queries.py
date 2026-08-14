@@ -23,6 +23,9 @@ from netpulse.analysis.diurnal import distinct_days, hourly_cells
 from netpulse.analysis.experience import ExperienceInputs, assess
 from netpulse.analysis.geo import locate_colo, locate_country
 from netpulse.analysis.segment import classify as segment_classify
+from netpulse.analysis.sla import Measured as SlaMeasured
+from netpulse.analysis.sla import SlaTargets
+from netpulse.analysis.sla import assess as assess_sla
 from netpulse.analysis.stats import (
     block_bootstrap_ci,
     blocked_seconds,
@@ -61,6 +64,8 @@ from netpulse.api.schemas import (
     Series,
     SeriesResponse,
     ServiceQualityOut,
+    SlaLineOut,
+    SlaReportOut,
     Status,
 )
 from netpulse.config import Target, get_config
@@ -464,6 +469,46 @@ _ASN_ORG = {
     "399358": "Datacamp/CDN77",
     "20454": "SHF",
 }
+
+
+def sla(session: Session, window: int, window_label: str, network_id: int | None) -> SlaReportOut:
+    """Measured delivery vs the ISP contract: median down/up capacity and idle latency from the
+    speedtests, and uptime from recorded outages, over the window."""
+    cfg = get_config().sla
+    now = time.time()
+    start = now - window
+    actives = session.scalars(
+        select(ActiveTest).where(ActiveTest.ts >= start, *_scope(ActiveTest.network_id, network_id))
+    ).all()
+    downs = [a.download_mbps for a in actives if a.download_mbps is not None]
+    ups = [a.upload_mbps for a in actives if a.upload_mbps is not None]
+    idles = [a.idle_latency for a in actives if a.idle_latency is not None]
+    outages = session.scalars(
+        select(Event).where(
+            Event.kind == "outage", Event.ts >= start, *_scope(Event.network_id, network_id)
+        )
+    ).all()
+    downtime = sum((o.end_ts or now) - max(o.ts, start) for o in outages)
+    uptime = max(0.0, 100 * (1 - downtime / window)) if window else None
+    measured = SlaMeasured(
+        download_mbps=percentile(downs, 50) if downs else None,
+        upload_mbps=percentile(ups, 50) if ups else None,
+        uptime_pct=uptime,
+        latency_ms=percentile(idles, 50) if idles else None,
+    )
+    report = assess_sla(
+        SlaTargets(cfg.download_mbps, cfg.upload_mbps, cfg.uptime_pct, cfg.latency_ms), measured
+    )
+    return SlaReportOut(
+        configured=report.configured, window_label=window_label, breaches=report.breaches,
+        lines=[
+            SlaLineOut(
+                metric=line.metric, contracted=line.contracted, measured=line.measured,
+                delivered_pct=line.delivered_pct, meets=line.meets,
+            )
+            for line in report.lines
+        ],
+    )
 
 
 def flow_services(

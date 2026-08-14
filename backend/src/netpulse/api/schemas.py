@@ -202,6 +202,21 @@ class GeoResponse(BaseModel):
     path_target: str | None = None
 
 
+class SlaLineOut(BaseModel):
+    metric: str
+    contracted: float
+    measured: float | None
+    delivered_pct: float | None
+    meets: bool | None
+
+
+class SlaReportOut(BaseModel):
+    configured: bool
+    window_label: str
+    breaches: int
+    lines: list[SlaLineOut]
+
+
 class ServiceQualityOut(BaseModel):
     service: str  # app name, ASN org, or raw ASN
     asn: str | None

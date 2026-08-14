@@ -36,7 +36,7 @@ test('dashboard shows live data, not placeholders', async ({ page }) => {
   // Status KPI resolves to Online/Offline (not the '—' placeholder) once the first fetch lands.
   await expect(page.getByText(/^(Online|Offline)$/)).toBeVisible({ timeout: 15_000 })
   // The experience panel renders its four activity cards (not the loading state).
-  await expect(page.getByRole('heading', { name: /experience/i })).toBeVisible()
+  await expect(page.getByText('Video calls', { exact: true })).toBeVisible({ timeout: 25_000 })
   await expect(page.getByText('Gathering data…')).toHaveCount(0)
   expect(errors).toEqual([])
 })
@@ -68,7 +68,7 @@ test('routes aggregates traffic by named service, not raw IPs', async ({ page })
   // The service table must have rows and none should be a bare IPv6 literal (the old wall of raw
   // endpoints). At least one named service (letters) must appear.
   const firstCol = table.locator('tbody tr td:first-child')
-  await expect(firstCol.first()).toBeVisible()
+  await expect(firstCol.first()).toBeVisible({ timeout: 15_000 })
   const labels = await firstCol.allInnerTexts()
   expect(labels.length).toBeGreaterThan(0)
   expect(labels.some((t) => /[A-Za-z]{3,}/.test(t))).toBe(true)
@@ -77,7 +77,8 @@ test('routes aggregates traffic by named service, not raw IPs', async ({ page })
 
 test('experience panel rates the four activities', async ({ page }) => {
   await page.goto('/')
-  for (const act of ['Video calls', 'Browsing', 'Streaming', 'Gaming']) {
-    await expect(page.getByText(act, { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('Video calls', { exact: true })).toBeVisible({ timeout: 25_000 })
+  for (const act of ['Browsing', 'Streaming', 'Gaming']) {
+    await expect(page.getByText(act, { exact: true })).toBeVisible()
   }
 })

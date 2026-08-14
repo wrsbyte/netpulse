@@ -33,6 +33,7 @@ from netpulse.api.schemas import (
     ScoreOut,
     SeriesResponse,
     ServiceQualityOut,
+    SlaReportOut,
     Status,
     VerdictOut,
 )
@@ -128,6 +129,18 @@ def get_dns_compare(
 ) -> list[DnsCompareRow]:
     _, window = window_for(range)
     return queries.dns_compare(session, window, resolve_network(session, network))
+
+
+@router.get("/sla", response_model=SlaReportOut)
+def get_sla(
+    session: Db,
+    range: Annotated[str, Query()] = "7d",
+    network: Annotated[str, Query()] = "current",
+) -> SlaReportOut:
+    _, window = window_for(range)
+    return queries.sla(
+        session, window, _RANGE_LABEL.get(range, ""), resolve_network(session, network)
+    )
 
 
 @router.get("/experience", response_model=ExperienceOut)

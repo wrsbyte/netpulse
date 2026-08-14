@@ -62,8 +62,16 @@ speedtest = true
 
 [retention]
 raw_hours = 48
+transactional_days = 30
 agg5m_days = 14
 agg1h_days = 400
+
+# What the ISP contract promises — measured delivery is judged against it. Omit any line you don't
+# want tracked. Set these to your plan.
+[sla]
+download_mbps = 200
+upload_mbps = 200
+uptime_pct = 99.5
 
 [dns]
 domains = ["google.com", "github.com", "cloudflare.com"]

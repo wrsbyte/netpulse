@@ -111,6 +111,15 @@ export const useGeo = () => {
   })
 }
 
+export const useSla = (range: Range) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['sla', range, network],
+    queryFn: () => api.sla(range, network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
 export const useExperience = (range: Range) => {
   const network = useNetwork()
   return useQuery({

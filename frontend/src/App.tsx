@@ -4,6 +4,7 @@ import { Header } from './components/Header'
 import { MapTab } from './components/MapTab'
 import { PathView } from './components/PathView'
 import { RoutesTab } from './components/RoutesTab'
+import { SlaPanel } from './components/SlaPanel'
 import { StatusBar } from './components/StatusBar'
 import { Tabs } from './components/Tabs'
 import { VerdictPanel } from './components/VerdictPanel'
@@ -23,6 +24,7 @@ function Dashboard() {
     <>
       <StatusBar />
       <ExperiencePanel />
+      <SlaPanel />
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="lg:col-span-2">
           <LatencyChart />

@@ -151,6 +151,21 @@ export interface FlowQuality {
   sockets: number
 }
 
+export interface SlaLine {
+  metric: string
+  contracted: number
+  measured: number | null
+  delivered_pct: number | null
+  meets: boolean | null
+}
+
+export interface SlaReport {
+  configured: boolean
+  window_label: string
+  breaches: number
+  lines: SlaLine[]
+}
+
 export interface ServiceQuality {
   service: string
   asn: string | null

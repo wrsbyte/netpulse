@@ -83,12 +83,22 @@ class DnsConfig(BaseModel):
     resolvers: list[str]
 
 
+class Sla(BaseModel):
+    """What the ISP contract promises, so measured delivery can be judged against it."""
+
+    download_mbps: float | None = None
+    upload_mbps: float | None = None
+    uptime_pct: float | None = None
+    latency_ms: float | None = None  # optional contracted/expected latency ceiling
+
+
 class NetpulseConfig(BaseModel):
     interface: str = ""  # empty -> auto-detect default route
     targets: list[Target]
     intervals: Intervals = Intervals()
     active: Active = Active()
     retention: Retention = Retention()
+    sla: Sla = Sla()
     dns: DnsConfig
 
 
