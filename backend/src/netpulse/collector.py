@@ -65,6 +65,7 @@ class Collector:
         await self._sync_network()
         if self._network_id is not None:
             self._backfill_network(self._network_id)
+        await self._guard(self._anycast)()  # capture the serving POP immediately (long cadence)
         log.info("starting", iface=self.iface, targets=len(self.config.targets),
                  network_id=self._network_id)
         self._schedule()
