@@ -180,7 +180,7 @@ export interface GeoPoint {
   lat: number
   lon: number
   label: string
-  kind: 'you' | 'pop'
+  kind: 'you' | 'pop' | 'service'
   out_of_country: boolean
   provider: string | null
   target: string | null

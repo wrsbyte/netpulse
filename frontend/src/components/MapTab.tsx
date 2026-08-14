@@ -24,7 +24,7 @@ function pointTooltip(p: GeoPoint): string {
   if (p.target) rows.push(`target ${p.target}`)
   if (p.rtt_ms != null) rows.push(`RTT ${p.rtt_ms.toFixed(0)} ms`)
   if (p.loss_pct != null) rows.push(`loss ${p.loss_pct.toFixed(1)}%`)
-  if (p.kind === 'pop') rows.push(p.out_of_country ? 'routed abroad' : 'in-country POP')
+  if (p.kind !== 'you') rows.push(p.out_of_country ? 'routed abroad' : 'in country')
   return rows.join('<br/>')
 }
 
@@ -55,12 +55,15 @@ export function MapTab() {
 
   useEffect(() => {
     if (!chart.current || !data) return
+    const nodeColor = (p: GeoPoint) =>
+      p.kind === 'you' ? '#38bdf8' : p.kind === 'service' ? '#a78bfa' : lossColor(p.loss_pct)
     const points = data.points.map((p) => ({
       name: p.label,
       value: [p.lon, p.lat, p.rtt_ms ?? 0],
+      symbol: p.kind === 'service' ? 'diamond' : 'circle',
       symbolSize: rttSize(p.rtt_ms, p.kind === 'you' ? 14 : 8),
       itemStyle: {
-        color: p.kind === 'you' ? '#38bdf8' : lossColor(p.loss_pct),
+        color: nodeColor(p),
         borderColor: p.out_of_country ? '#f87171' : 'transparent',
         borderWidth: p.out_of_country ? 2 : 0,
       },
@@ -142,13 +145,17 @@ export function MapTab() {
   return (
     <Panel
       title="Route map"
-      subtitle="Your real route (dashed line = geolocated traceroute hops) and the CDN POPs serving you. Node size ∝ measured RTT; colour = loss (green <2%, amber <5%, red ≥5%); a red ring = a POP routed out of country."
+      subtitle="Where your traffic goes: the geolocated services you talk to (◆ violet), the CDN POPs serving you (● coloured by loss), and your real route (dashed = traceroute hops). Node size ∝ measured RTT; a red ring = routed out of country."
     >
       <div ref={ref} style={{ height: 460 }} className="w-full" />
       <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted">
         <span>
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#38bdf8' }} />{' '}
           You
+        </span>
+        <span>
+          <span className="inline-block h-2 w-2 rotate-45" style={{ background: '#a78bfa' }} />{' '}
+          service
         </span>
         <span>
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#34d399' }} />{' '}

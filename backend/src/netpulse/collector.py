@@ -28,6 +28,7 @@ from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
 from netpulse.db.models import (
     AnycastPop,
     Event,
+    FlowQuality,
     HopLocation,
     Network,
     RegionalBaseline,
@@ -58,7 +59,7 @@ from netpulse.shell import run as shrun
 log = get_logger("collector")
 
 _OUTAGE_CYCLES = 3  # consecutive all-internet-down ping cycles before an outage is declared
-_HOP_GEO_BATCH = 8  # new hop IPs to geolocate per run, to be gentle on the free RIPEstat endpoint
+_HOP_GEO_BATCH = 16  # new hop/flow IPs to geolocate per run, gentle on the free RIPEstat endpoint
 
 
 def _is_public_ip(ip: str) -> bool:
@@ -231,13 +232,20 @@ class Collector:
         log.info("regional baseline updated", country="MX", n=len(rtts))
 
     async def _hop_geo(self) -> None:
-        """Geolocate new public traceroute-hop IPs via RIPEstat, cached — so the map can draw the
-        real hop-by-hop route. A few per run; private/unlocatable IPs are skipped."""
+        """Geolocate new public traceroute-hop IPs AND the endpoints of active flows via RIPEstat,
+        cached — so the map can draw the real route and place every service you talk to. A few per
+        run; private/unlocatable IPs are skipped."""
+        since = time.time() - 3600
         with _session() as s:
             hop_ips = {
                 h for h in s.scalars(
-                    select(Traceroute.host).where(Traceroute.ts >= time.time() - 3600).distinct()
+                    select(Traceroute.host).where(Traceroute.ts >= since).distinct()
                 ).all() if h
+            }
+            hop_ips |= {
+                ip for ip in s.scalars(
+                    select(FlowQuality.remote_ip).where(FlowQuality.ts >= since).distinct()
+                ).all() if ip
             }
             cached = set(s.scalars(select(HopLocation.ip)).all())
         todo = [ip for ip in hop_ips if ip not in cached and _is_public_ip(ip)]

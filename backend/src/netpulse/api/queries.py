@@ -249,8 +249,68 @@ def geo_map(session: Session, network_id: int | None) -> GeoResponse:
                 from_lat=you[0], from_lon=you[1], to_lat=loc[0], to_lon=loc[1],
                 out_of_country=p.out_of_country, rtt_ms=rtt, loss_pct=loss,
             ))
+    placed = {(round(p.lat, 1), round(p.lon, 1)) for p in points}
+    svc_points, svc_arcs = _service_points(session, network_id, client_cc, you, placed)
+    points.extend(svc_points)
+    arcs.extend(svc_arcs)
     target, path = _hop_path(session, network_id)
     return GeoResponse(points=points, arcs=arcs, path=path, path_target=target)
+
+
+def _service_points(
+    session: Session,
+    network_id: int | None,
+    client_cc: str | None,
+    you: tuple[float, float] | None,
+    placed: set[tuple[float, float]],
+) -> tuple[list[GeoPoint], list[GeoArc]]:
+    """Every service you actually talk to, geolocated (RIPEstat, cached) and sized by its base RTT
+    — so the map shows all your CDNs/destinations, not just the one anycast POP we can trace."""
+    start = time.time() - 1800
+    rows = session.scalars(
+        select(FlowQuality)
+        .where(FlowQuality.ts >= start, *_scope(FlowQuality.network_id, network_id))
+        .order_by(FlowQuality.ts.desc())
+    ).all()
+    latest: dict[str, FlowQuality] = {}
+    for r in rows:
+        latest.setdefault(r.remote_ip, r)
+    locations = {
+        loc.ip: loc
+        for loc in session.scalars(select(HopLocation).where(HopLocation.located)).all()
+    }
+    best: dict[str, tuple[str, float, float, str | None, str | None, float]] = {}
+    goodput: dict[str, float] = {}
+    for r in latest.values():
+        loc = locations.get(r.remote_ip)
+        if loc is None or loc.lat is None or loc.lon is None:
+            continue
+        asn = (r.asn or "").removeprefix("AS")
+        service = r.app or _ASN_ORG.get(asn, "") or (f"AS{asn}" if asn else "Unknown")
+        goodput[service] = goodput.get(service, 0.0) + (r.delivery_mbps or 0.0)
+        rtt = r.min_rtt_ms if r.min_rtt_ms is not None else (r.srtt_ms or 1e9)
+        if service not in best or rtt < best[service][5]:
+            best[service] = (r.remote_ip, loc.lat, loc.lon, loc.city, loc.country, rtt)
+
+    points: list[GeoPoint] = []
+    arcs: list[GeoArc] = []
+    for service in sorted(goodput, key=lambda s: goodput[s], reverse=True)[:8]:
+        ip, lat, lon, city, country, rtt = best[service]
+        if (round(lat, 1), round(lon, 1)) in placed:  # don't stack on an already-shown POP
+            continue
+        abroad = client_cc is not None and country is not None and country != client_cc
+        rtt_val = rtt if rtt < 1e9 else None
+        points.append(GeoPoint(
+            lat=lat, lon=lon, label=f"{service} ({city or country or '?'})",
+            kind="service", out_of_country=abroad, provider=service, target=ip,
+            rtt_ms=rtt_val, loss_pct=None,
+        ))
+        if you:
+            arcs.append(GeoArc(
+                from_lat=you[0], from_lon=you[1], to_lat=lat, to_lon=lon,
+                out_of_country=abroad, rtt_ms=rtt_val, loss_pct=None,
+            ))
+    return points, arcs
 
 
 def _hop_path(session: Session, network_id: int | None) -> tuple[str | None, list[GeoHop]]:
