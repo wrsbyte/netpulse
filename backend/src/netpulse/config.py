@@ -73,6 +73,7 @@ class Active(BaseModel):
 
 class Retention(BaseModel):
     raw_hours: int = 48
+    transactional_days: int = 30  # high-volume append-only tables (traceroute, flows, scans…)
     agg5m_days: int = 14
     agg1h_days: int = 400
 

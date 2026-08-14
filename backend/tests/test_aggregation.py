@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 
 from netpulse.aggregation import run_rollups
 from netpulse.config import Retention
-from netpulse.db.models import Agg, PingRaw
+from netpulse.db.models import Agg, PingRaw, Traceroute
 from netpulse.db.session import get_session, init_engine
 
 
@@ -71,3 +71,23 @@ def test_rollup_computes_5m_and_1h_for_rtt(tmp_path: Path) -> None:
     assert sum(r.n for r in five) == 10
     assert min(r.mn for r in five if r.mn is not None) == 50.0
     assert max(r.mx for r in five if r.mx is not None) == 59.0
+
+
+def test_prune_bounds_transactional_tables(tmp_path: Path) -> None:
+    # Traceroute/Flow/etc. must not grow forever: rows older than the transactional window are
+    # pruned, recent ones kept.
+
+    init_engine(tmp_path / "prune.db")
+    now = time.time()
+    old = now - 40 * 86400  # older than the 30-day default
+    with get_session() as s:
+        s.add_all([
+            Traceroute(ts=old, target="1.1.1.1", hop=1, host="a", loss_pct=0.0, rtt_ms=1.0),
+            Traceroute(ts=now - 3600, target="1.1.1.1", hop=1, host="b", loss_pct=0.0, rtt_ms=1.0),
+        ])
+        s.commit()
+    with get_session() as s:
+        run_rollups(s, Retention(), now)
+    with get_session() as s:
+        remaining = s.scalars(select(Traceroute.host)).all()
+    assert remaining == ["b"]  # the 40-day-old row is gone, the recent one stays

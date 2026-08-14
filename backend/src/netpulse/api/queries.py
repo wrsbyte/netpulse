@@ -596,18 +596,19 @@ def diurnal(
     session: Session, metric: str, window: int, network_id: int | None
 ) -> DiurnalResponse:
     """Per-hour-of-day distribution of loss or latency over internet targets, with CIs and an
-    honest days-observed flag (a diurnal claim needs the pattern to repeat across days)."""
+    honest days-observed flag (a diurnal claim needs the pattern to repeat across days). Reads the
+    1-h rollups (retained for months), so the ≥3-day pattern can actually be met — raw is pruned
+    at ~48 h and could never satisfy it."""
     start = time.time() - window
-    pings = session.scalars(
-        select(PingRaw).where(
-            PingRaw.ts >= start, PingRaw.target.in_(_internet_hosts()),
-            *_scope(PingRaw.network_id, network_id),
+    agg_metric = "ping.rtt_avg" if metric == "latency" else "ping.loss_pct"
+    hosts = _internet_hosts()
+    rows = session.scalars(
+        select(Agg).where(
+            Agg.metric == agg_metric, Agg.resolution == "1h", Agg.bucket >= start,
+            Agg.tag.in_(hosts), *_scope(Agg.network_id, network_id),
         )
     ).all()
-    if metric == "latency":
-        samples = [(p.ts, p.rtt_avg) for p in pings if p.rtt_avg is not None]
-    else:
-        samples = [(p.ts, p.loss_pct) for p in pings]
+    samples = [(r.bucket, r.avg) for r in rows if r.avg is not None]
     days = distinct_days(samples)
     cells = [DiurnalCell(**asdict(c)) for c in hourly_cells(samples)]
     return DiurnalResponse(metric=metric, days_observed=days, sufficient=days >= 3, cells=cells)
@@ -928,6 +929,10 @@ def gather_stats(
 ) -> WindowStats:
     """Roll the stored samples in a window into the inputs the verdict engine reasons over."""
     now = time.time()
+    # Loss/latency/coverage read RAW ping rows, which are pruned at `raw_hours`; a 7-day request
+    # therefore only has ~48 h of data. Cap the window to what raw retention can actually cover so
+    # availability (downtime / covered) and coverage% aren't computed against absent time.
+    window = min(window, get_config().retention.raw_hours * 3600)
     start = now - window
     hosts = _internet_hosts()
 
