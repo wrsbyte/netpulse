@@ -121,7 +121,7 @@ def test_full_coverage_adds_no_note() -> None:
 
 
 def test_latency_anomaly_flags_deviation_from_own_normal() -> None:
-    # Absolute latency alone wouldn't fire (< 100 ms), but 5 SD above this link's own history should.
+    # Absolute latency alone would not fire (< 100 ms); 5 SD above this link history should.
     v = conclude(WindowStats(
         loss=0, latency=60, latency_anomaly_z=5.0, availability=100, wifi_signal_avg=-45,
     ))
