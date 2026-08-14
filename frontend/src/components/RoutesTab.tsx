@@ -92,7 +92,10 @@ function FlowQualityPanel() {
               {services.map((s) => (
                 <tr key={s.service} className="border-b border-border/40 last:border-0">
                   <td className="py-1.5 pr-3 text-ink">
-                    {s.service} {s.asn && <span className="text-[11px] text-muted">AS{s.asn}</span>}
+                    {s.service}{' '}
+                    {s.asn && !s.service.startsWith('AS') && (
+                      <span className="text-[11px] text-muted">AS{s.asn}</span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-muted">{s.endpoints}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-muted">
