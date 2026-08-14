@@ -31,6 +31,7 @@ from netpulse.analysis.stats import (
     blocked_seconds,
     covered_seconds,
     gilbert_elliott,
+    robust_z,
     spearman,
 )
 from netpulse.analysis.verdict import WindowStats
@@ -1002,6 +1003,7 @@ def gather_stats(
     worst_target, typical_loss, loss_ci, loss_burst = _loss_stats(per_target)
 
     latency_p95, latency_excess = _latency_stats(pings)
+    latency_anomaly_z = _latency_anomaly(session, latency_p95, network_id)
 
     outages = session.scalars(
         select(Event).where(
@@ -1069,6 +1071,7 @@ def gather_stats(
         loss_burst_len=loss_burst,
         latency=latency_p95,
         latency_excess=latency_excess,
+        latency_anomaly_z=latency_anomaly_z,
         jitter=percentile(jitters, 95) if jitters else None,
         bufferbloat=latest_active.bufferbloat_ms if latest_active else None,
         availability=max(0.0, 100 * (1 - downtime / covered)) if covered else None,
@@ -1121,6 +1124,28 @@ def _drop_measurement_artifacts(
     for t in active_ts:  # a speedtest saturates from its start ts for ~tens of seconds
         blocked.update(range(int(t) - _SPEEDTEST_BEFORE, int(t) + _SPEEDTEST_AFTER + 1))
     return [p for p in pings if int(p.ts) not in blocked]
+
+
+def _latency_anomaly(
+    session: Session, latency_p95: float | None, network_id: int | None
+) -> float | None:
+    """How anomalous the current latency is vs THIS link's own history (robust z over the retained
+    1-h rollups). Turns 'worse than an absolute number' into 'worse than your own normal', so a
+    legitimately-distant-but-stable connection isn't flagged and a real step-up is."""
+    if latency_p95 is None:
+        return None
+    baseline = [
+        p95
+        for p95 in session.scalars(
+            select(Agg.p95).where(
+                Agg.metric == "ping.rtt_avg", Agg.resolution == "1h",
+                Agg.tag.in_(_internet_hosts()), Agg.p95.is_not(None),
+                *_scope(Agg.network_id, network_id),
+            )
+        ).all()
+        if p95 is not None
+    ]
+    return robust_z(latency_p95, baseline)
 
 
 def _latency_stats(pings: Sequence[PingRaw]) -> tuple[float | None, float | None]:

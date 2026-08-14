@@ -36,6 +36,7 @@ class WindowStats:
     loss_burst_len: float | None = None  # mean consecutive lossy cycles (bursty vs uniform)
     latency: float | None = None  # p95 RTT ms, internet targets
     latency_excess: float | None = None  # p95 RTT above the path's own empirical floor
+    latency_anomaly_z: float | None = None  # robust-z of current latency vs this link's own history
     jitter: float | None = None  # p95 ms
     bufferbloat: float | None = None  # latest ms added under load
     availability: float | None = None  # % of COVERED time internet reachable (gaps excluded)
@@ -132,6 +133,15 @@ def conclude(stats: WindowStats) -> Verdict:
             f"Internet unreachable {pct_txt}",
             f"{stats.outage_count} outage(s), {stats.downtime_s / 60:.1f} min total; "
             f"worst {worst_min:.1f} min. Attributed to {cause}.{breakdown_txt}",
+        ))
+
+    anomalous = stats.latency_anomaly_z is not None and stats.latency_anomaly_z >= 3
+    if anomalous and (stats.latency or 0) >= 40:
+        findings.append(Finding(
+            "warning",
+            "Latency is unusually high for this connection",
+            f"current p95 RTT {stats.latency:.0f} ms is {stats.latency_anomaly_z:.1f} SD above this "
+            "link's own normal — something changed, not just distance.",
         ))
 
     if stats.latency is not None and stats.latency >= 100:

@@ -118,3 +118,18 @@ def test_full_coverage_adds_no_note() -> None:
         loss=0, latency=25, availability=100, coverage_pct=99.0, wifi_signal_avg=-45,
     ))
     assert not any("Partial data" in f.title for f in v.findings)
+
+
+def test_latency_anomaly_flags_deviation_from_own_normal() -> None:
+    # Absolute latency alone wouldn't fire (< 100 ms), but 5σ above this link's own history should.
+    v = conclude(WindowStats(
+        loss=0, latency=60, latency_anomaly_z=5.0, availability=100, wifi_signal_avg=-45,
+    ))
+    assert any('unusually high' in f.title for f in v.findings)
+
+
+def test_stable_distant_link_is_not_an_anomaly() -> None:
+    v = conclude(WindowStats(
+        loss=0, latency=80, latency_anomaly_z=0.5, availability=100, wifi_signal_avg=-45,
+    ))
+    assert not any('unusually high' in f.title for f in v.findings)
