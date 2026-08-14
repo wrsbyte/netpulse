@@ -7,7 +7,10 @@ so the collector/API carry no numpy dependency for a handful of series.
 
 from __future__ import annotations
 
+import random
 from statistics import median
+
+from netpulse.quality import percentile
 
 
 def pearson(xs: list[float], ys: list[float]) -> float | None:
@@ -67,6 +70,74 @@ def mad(values: list[float]) -> float:
         return 0.0
     med = median(values)
     return median([abs(v - med) for v in values])
+
+
+def autocorr1(xs: list[float]) -> float:
+    """Lag-1 autocorrelation. 0 for constant/too-short series."""
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    mean = sum(xs) / n
+    denom = sum((x - mean) ** 2 for x in xs)
+    if denom == 0:
+        return 0.0
+    num = sum((xs[i] - mean) * (xs[i + 1] - mean) for i in range(n - 1))
+    return num / denom
+
+
+def effective_n(xs: list[float]) -> float:
+    """Autocorrelation-adjusted sample size n*(1-r)/(1+r) with r the lag-1 autocorrelation:
+    network series are not i.i.d., so the naive n over-states the information and shrinks CIs."""
+    r = autocorr1(xs)
+    if r <= 0:
+        return float(len(xs))
+    return len(xs) * (1 - r) / (1 + r)
+
+
+def block_bootstrap_ci(
+    xs: list[float], block: int = 10, samples: int = 500, level: float = 0.95, seed: int = 12345
+) -> tuple[float, float]:
+    """95% CI on the mean by moving-block bootstrap — resamples contiguous blocks so the burst
+    structure (autocorrelation) is preserved, unlike an i.i.d. bootstrap or Wilson."""
+    n = len(xs)
+    if n == 0:
+        return (0.0, 0.0)
+    if n <= block:
+        return (min(xs), max(xs))
+    rng = random.Random(seed)
+    n_blocks = -(-n // block)  # ceil
+    max_start = n - block
+    means: list[float] = []
+    for _ in range(samples):
+        acc: list[float] = []
+        for _ in range(n_blocks):
+            s = rng.randint(0, max_start)
+            acc.extend(xs[s : s + block])
+        acc = acc[:n]
+        means.append(sum(acc) / len(acc))
+    means.sort()
+    lo = (1 - level) / 2
+    return (percentile(means, lo * 100), percentile(means, (1 - lo) * 100))
+
+
+def gilbert_elliott(bad: list[bool]) -> tuple[float, float]:
+    """From a good/bad (loss) series: (fraction bad, mean bad-burst length). Distinguishes '3%
+    as one long outage' from '3% spread uniformly' — different cause, different experience."""
+    if not bad:
+        return (0.0, 0.0)
+    frac = sum(bad) / len(bad)
+    bursts: list[int] = []
+    run = 0
+    for b in bad:
+        if b:
+            run += 1
+        elif run:
+            bursts.append(run)
+            run = 0
+    if run:
+        bursts.append(run)
+    mean_burst = sum(bursts) / len(bursts) if bursts else 0.0
+    return (frac, mean_burst)
 
 
 def robust_z(value: float, baseline: list[float]) -> float | None:

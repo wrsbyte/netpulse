@@ -25,9 +25,12 @@ _LAYER_LABEL = {
 
 @dataclass(frozen=True, slots=True)
 class WindowStats:
-    loss: float | None = None  # avg % loss, internet targets
+    loss: float | None = None  # worst path p95 % loss, internet targets
+    loss_ci: tuple[float, float] | None = None  # block-bootstrap 95% CI on worst-path loss
+    loss_burst_len: float | None = None  # mean consecutive lossy cycles (bursty vs uniform)
     latency: float | None = None  # p95 RTT ms, internet targets
-    jitter: float | None = None  # avg ms
+    latency_excess: float | None = None  # p95 RTT above the path's own empirical floor
+    jitter: float | None = None  # p95 ms
     bufferbloat: float | None = None  # latest ms added under load
     availability: float | None = None  # % of window internet reachable
     outage_count: int = 0
@@ -95,19 +98,32 @@ def conclude(stats: WindowStats) -> Verdict:
         ))
 
     if stats.latency is not None and stats.latency >= 100:
+        excess = stats.latency_excess
+        excess_txt = (
+            f" ({excess:.0f} ms above the path's own minimum — congestion, not distance)"
+            if excess is not None and excess >= 20
+            else ""
+        )
         findings.append(Finding(
             "warning" if stats.latency < 250 else "error",
             "High latency to the internet",
-            f"p95 RTT {stats.latency:.0f} ms — pages and calls feel sluggish even when "
-            "bandwidth looks fine.",
+            f"p95 RTT {stats.latency:.0f} ms{excess_txt} — pages and calls feel sluggish.",
         ))
 
     if stats.worst_target and stats.worst_target[1] >= 2:
         host, loss = stats.worst_target
+        ci_txt = ""
+        if stats.loss_ci:
+            ci_txt = f" (95% CI {stats.loss_ci[0]:.1f}-{stats.loss_ci[1]:.1f}%)"
+        burst_txt = (
+            f", in bursts of ~{stats.loss_burst_len:.0f} cycles"
+            if stats.loss_burst_len and stats.loss_burst_len >= 2
+            else ""
+        )
         findings.append(Finding(
             "warning" if loss < 20 else "error",
             f"Packet loss to {host}",
-            f"{loss:.1f}% average loss — degrades calls and page loads.",
+            f"{loss:.1f}% average loss{ci_txt}{burst_txt} — degrades calls and page loads.",
         ))
 
     if not _wifi_healthy(stats):

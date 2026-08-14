@@ -18,7 +18,7 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from netpulse.aggregation import SOURCES
 from netpulse.analysis.attribute import HopStat, attribute
-from netpulse.analysis.stats import spearman
+from netpulse.analysis.stats import block_bootstrap_ci, gilbert_elliott, spearman
 from netpulse.analysis.verdict import WindowStats
 from netpulse.api.schemas import (
     ActivePoint,
@@ -555,12 +555,25 @@ def gather_stats(
         per_target.setdefault(p.target, []).append(p.loss_pct)
     worst_target = None
     worst_loss_p95 = None
+    loss_ci = None
+    loss_burst = None
     if per_target:
         host, vals = max(per_target.items(), key=lambda kv: sum(kv[1]) / len(kv[1]))
         worst_target = (host, sum(vals) / len(vals))
         # Score input = the worst path's p95 loss, so bursty drops (the real symptom) surface
         # instead of being averaged away across a mostly-healthy window.
         worst_loss_p95 = max(percentile(v, 95) for v in per_target.values())
+        loss_ci = block_bootstrap_ci(vals) if len(vals) > 10 else None
+        _, loss_burst = gilbert_elliott([v > 0 for v in vals])
+
+    # Empirical latency floor: the fastest RTT ever seen on this path is its physical minimum;
+    # excess above it is congestion/queuing, not distance (the audit's min-RTT baseline).
+    rtt_mins = [p.rtt_min for p in pings if p.rtt_min is not None]
+    floor = min(rtt_mins) if rtt_mins else None
+    latency_p95 = percentile(rtts, 95) if rtts else None
+    latency_excess = (
+        max(0.0, latency_p95 - floor) if latency_p95 is not None and floor is not None else None
+    )
 
     outages = session.scalars(
         select(Event).where(
@@ -598,7 +611,10 @@ def gather_stats(
 
     return WindowStats(
         loss=worst_loss_p95,
-        latency=percentile(rtts, 95) if rtts else None,
+        loss_ci=loss_ci,
+        loss_burst_len=loss_burst,
+        latency=latency_p95,
+        latency_excess=latency_excess,
         jitter=percentile(jitters, 95) if jitters else None,
         bufferbloat=latest_active.bufferbloat_ms if latest_active else None,
         availability=max(0.0, 100 * (1 - downtime / window)) if window else None,
