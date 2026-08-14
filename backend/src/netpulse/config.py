@@ -52,6 +52,7 @@ class Intervals(BaseModel):
     throughput: int = 3
     dns: int = 20
     flows: int = 30
+    flow_quality: int = 30
     traceroute: int = 300
     wifi_scan: int = 900
     public_ip: int = 300

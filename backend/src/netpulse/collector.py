@@ -31,6 +31,7 @@ from netpulse.probes import (
     active,
     anycast,
     dns,
+    flow_quality,
     flows,
     network,
     ping,
@@ -77,6 +78,7 @@ class Collector:
         add(self._guard(self._throughput), "interval", seconds=iv.throughput)
         add(self._guard(self._dns), "interval", seconds=iv.dns)
         add(self._guard(self._flows), "interval", seconds=iv.flows)
+        add(self._guard(self._flow_quality), "interval", seconds=iv.flow_quality)
         add(self._guard(self._traceroute), "interval", seconds=iv.traceroute)
         add(self._guard(self._wifi_scan), "interval", seconds=iv.wifi_scan)
         add(self._guard(self._public_ip), "interval", seconds=iv.public_ip)
@@ -134,6 +136,9 @@ class Collector:
 
     async def _flows(self) -> None:
         self._persist(await flows.sample(time.time(), self.iface))
+
+    async def _flow_quality(self) -> None:
+        self._persist(await flow_quality.sample(time.time(), self.iface))
 
     async def _traceroute(self) -> None:
         now = time.time()

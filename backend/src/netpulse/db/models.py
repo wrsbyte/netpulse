@@ -170,6 +170,27 @@ class Event(NetworkScoped, Base):
     detail: Mapped[str] = mapped_column(String)
 
 
+class FlowQuality(NetworkScoped, Base):
+    """Passive per-endpoint transport quality from the kernel (`ss -ti`).
+
+    Real RTT / base-RTT / retransmissions / goodput on the destinations the user *actually*
+    uses — app experience, not synthetic ICMP to a curated list. Aggregated per remote endpoint.
+    """
+
+    __tablename__ = "flow_quality"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[float] = ts_column()
+    remote_ip: Mapped[str] = mapped_column(String, index=True)
+    asn: Mapped[str | None] = mapped_column(String)
+    app: Mapped[str | None] = mapped_column(String, index=True)
+    srtt_ms: Mapped[float | None] = mapped_column(Float)  # smoothed RTT
+    min_rtt_ms: Mapped[float | None] = mapped_column(Float)  # base RTT (congestion-free floor)
+    retrans_total: Mapped[int | None] = mapped_column(Integer)  # cumulative retransmits
+    delivery_mbps: Mapped[float | None] = mapped_column(Float)  # achieved goodput
+    sockets: Mapped[int] = mapped_column(Integer)  # sockets aggregated
+
+
 class AnycastPop(NetworkScoped, Base):
     """Which POP an anycast CDN is serving this host from — the actionable routing signal.
 
