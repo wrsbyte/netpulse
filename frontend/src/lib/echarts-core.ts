@@ -1,6 +1,13 @@
 // Tree-shaken ECharts: register only the chart types and components we use, so the bundle
 // carries a fraction of the full library. Import `echarts` from here, never from 'echarts'.
-import { BarChart, EffectScatterChart, LinesChart, LineChart, MapChart } from 'echarts/charts'
+import {
+  BarChart,
+  EffectScatterChart,
+  LinesChart,
+  LineChart,
+  MapChart,
+  ScatterChart,
+} from 'echarts/charts'
 import {
   GeoComponent,
   GridComponent,
@@ -18,6 +25,7 @@ echarts.use([
   MapChart,
   LinesChart,
   EffectScatterChart,
+  ScatterChart,
   GeoComponent,
   GridComponent,
   TooltipComponent,
