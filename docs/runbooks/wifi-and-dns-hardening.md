@@ -81,25 +81,15 @@ sudo systemctl restart NetworkManager
 
 ## 3. journal access for netpulse's disconnect probe
 
-**Activate:**
+On this box the collector **already** reads the system journal — `/var/log/journal`
+has an ACL granting `wheel` and `adm` read, and the collector runs with group
+`wheel`. So no group change or re-login was actually required (verified: fresh
+`wifi_disconnect` events flow, watermark advances). `usermod -aG systemd-journal
+"$USER"` is a belt-and-suspenders extra if you ever move the collector out of `wheel`.
 
-```bash
-sudo usermod -aG systemd-journal "$USER"
-```
-
-Group membership applies to the `--user` service only after a fresh login. Apply
-now without a full logout:
-
-```bash
-loginctl terminate-user "$USER"      # closes the session; log back in
-# then:
-systemctl --user restart netpulse-collector
-```
-
-**Verify:** after a few minutes, netpulse's Events tab shows `wifi_disconnect`
-rows (or `SELECT count(*) FROM event WHERE kind='wifi_disconnect'` > 0). Before the
-group change it stays 0 even though the code is correct (proven: `journalctl -g
-CTRL-EVENT-DISCONNECTED` from a shell returns rows).
+**Verify:** netpulse's Events tab shows `wifi_disconnect` rows, or
+`SELECT count(*) FROM event WHERE kind='wifi_disconnect'` > 0. All recent ones are
+`reason=3 local` = the laptop's own WiFi blips (suspend / config apply), not outages.
 
 **Deactivate / revert:** `sudo gpasswd -d "$USER" systemd-journal` (then re-login).
 
