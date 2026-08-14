@@ -31,6 +31,7 @@ from netpulse.api.schemas import (
     AnycastOut,
     DiurnalCell,
     DiurnalResponse,
+    DnsCompareRow,
     EventOut,
     FlowOut,
     FlowQualityOut,
@@ -276,6 +277,33 @@ def recent_flow_quality(
     ]
     out.sort(key=lambda f: f.excess_ms or 0, reverse=True)
     return out[:limit]
+
+
+def dns_compare(
+    session: Session, window: int, network_id: int | None
+) -> list[DnsCompareRow]:
+    """Reliable side-by-side of the resolvers over the window: median, p95, jitter (IQR) and
+    failure rate — the honest basis for 'which DNS' instead of a single ping."""
+    start = time.time() - window
+    rows = session.scalars(
+        select(DnsRaw).where(DnsRaw.ts >= start, *_scope(DnsRaw.network_id, network_id))
+    ).all()
+    by_resolver: dict[str, list[DnsRaw]] = {}
+    for r in rows:
+        by_resolver.setdefault(r.resolver, []).append(r)
+    out: list[DnsCompareRow] = []
+    for resolver, samples in by_resolver.items():
+        oks = [s.query_ms for s in samples if s.ok and s.query_ms is not None]
+        fails = sum(1 for s in samples if not s.ok)
+        out.append(DnsCompareRow(
+            resolver=resolver, n=len(samples),
+            median_ms=percentile(oks, 50) if oks else None,
+            p95_ms=percentile(oks, 95) if oks else None,
+            jitter_ms=(percentile(oks, 75) - percentile(oks, 25)) if oks else None,
+            fail_pct=round(100 * fails / len(samples), 1) if samples else 0.0,
+        ))
+    out.sort(key=lambda r: r.median_ms if r.median_ms is not None else 1e9)
+    return out
 
 
 def diurnal(

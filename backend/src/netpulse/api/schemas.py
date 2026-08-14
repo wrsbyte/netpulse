@@ -183,6 +183,15 @@ class GeoResponse(BaseModel):
     arcs: list[GeoArc]
 
 
+class DnsCompareRow(BaseModel):
+    resolver: str
+    n: int
+    median_ms: float | None
+    p95_ms: float | None
+    jitter_ms: float | None  # inter-quartile range
+    fail_pct: float
+
+
 class Status(BaseModel):
     online: bool
     current_rtt: float | None

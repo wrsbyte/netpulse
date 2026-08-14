@@ -21,6 +21,7 @@ from netpulse.api.schemas import (
     ActivePoint,
     AnycastOut,
     DiurnalResponse,
+    DnsCompareRow,
     EventOut,
     FindingOut,
     FlowOut,
@@ -115,6 +116,16 @@ def get_anycast(
     network: Annotated[str, Query()] = "current",
 ) -> list[AnycastOut]:
     return queries.latest_anycast(session, resolve_network(session, network))
+
+
+@router.get("/dns-compare", response_model=list[DnsCompareRow])
+def get_dns_compare(
+    session: Db,
+    range: Annotated[str, Query()] = "24h",
+    network: Annotated[str, Query()] = "current",
+) -> list[DnsCompareRow]:
+    _, window = window_for(range)
+    return queries.dns_compare(session, window, resolve_network(session, network))
 
 
 @router.get("/diurnal", response_model=DiurnalResponse)

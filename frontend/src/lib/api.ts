@@ -2,6 +2,7 @@ import type {
   ActivePoint,
   AnycastInfo,
   DiurnalResponse,
+  DnsCompareRow,
   EventOut,
   FlowOut,
   FlowQuality,
@@ -56,6 +57,8 @@ export const api = {
     get<FlowQuality[]>(`/flow-quality?${q(range, network)}`),
   diurnal: (metric: string, range: Range, network: string) =>
     get<DiurnalResponse>(`/diurnal?metric=${metric}&${q(range, network)}`),
+  dnsCompare: (range: Range, network: string) =>
+    get<DnsCompareRow[]>(`/dns-compare?${q(range, network)}`),
   rawTables: () => get<string[]>('/raw/tables'),
   raw: (name: string, range: Range, network: string, query: RawQuery) =>
     get<RawPage>(`/raw/${name}?${q(range, network)}&${rawParams(query)}`),

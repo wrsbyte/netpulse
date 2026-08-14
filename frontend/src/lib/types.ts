@@ -187,6 +187,15 @@ export interface GeoResponse {
   arcs: GeoArc[]
 }
 
+export interface DnsCompareRow {
+  resolver: string
+  n: number
+  median_ms: number | null
+  p95_ms: number | null
+  jitter_ms: number | null
+  fail_pct: number
+}
+
 export interface Status {
   online: boolean
   current_rtt: number | null

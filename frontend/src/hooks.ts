@@ -102,6 +102,15 @@ export const useGeo = () => {
   })
 }
 
+export const useDnsCompare = (range: Range) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['dnsCompare', range, network],
+    queryFn: () => api.dnsCompare(range, network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
 export const useDiurnal = (metric: string, range: Range) => {
   const network = useNetwork()
   return useQuery({

@@ -2,6 +2,7 @@ import { useAnycast, useFlowQuality } from '../hooks'
 import { useUi } from '../store'
 import { fmt } from '../lib/format'
 import { DiurnalPanel } from './DiurnalPanel'
+import { DnsComparePanel } from './DnsComparePanel'
 import { Badge, Panel } from './ui'
 
 function excessTone(ms: number | null): 'ok' | 'warn' | 'danger' | 'info' {
@@ -130,6 +131,7 @@ export function RoutesTab() {
   return (
     <div className="space-y-4">
       <AnycastPanel />
+      <DnsComparePanel />
       <DiurnalPanel />
       <FlowQualityPanel />
     </div>
