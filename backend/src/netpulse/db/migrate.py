@@ -9,9 +9,13 @@ from __future__ import annotations
 
 from sqlalchemy import Engine, text
 
-_NETWORK_SCOPED_TABLES = (
-    "ping_raw", "wifi_raw", "throughput_raw", "dns_raw", "agg",
-    "active_test", "traceroute", "flow", "wifi_scan", "event",
+from netpulse.db.models import NetworkScoped
+
+# Derived from the mapped models so it can never drift from the schema (audit M3): every table
+# whose model inherits NetworkScoped must carry a network_id column on an upgraded DB.
+_NETWORK_SCOPED_TABLES = tuple(
+    m.__tablename__  # type: ignore[attr-defined]  # every subclass is a mapped model with a table
+    for m in NetworkScoped.__subclasses__()
 )
 
 

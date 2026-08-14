@@ -259,6 +259,19 @@ def geo_map(session: Session, network_id: int | None) -> GeoResponse:
     return GeoResponse(points=points, arcs=arcs, path=path, path_target=target)
 
 
+def _service_name(app: str | None, asn: str | None) -> str:
+    """Human label for a flow: its classified app, else a named ASN org, else the bare ASN."""
+    num = (asn or "").removeprefix("AS")
+    return app or _ASN_ORG.get(num, "") or (f"AS{num}" if num else "Unknown")
+
+
+def _located_hops(session: Session) -> dict[str, HopLocation]:
+    return {
+        loc.ip: loc
+        for loc in session.scalars(select(HopLocation).where(HopLocation.located)).all()
+    }
+
+
 def _plottable(lat: float | None, lon: float | None) -> bool:
     """Reject (0,0) null-island coordinates — RIPEstat returns them for un-geolocatable IPs, and
     plotting them draws arcs/lines into the ocean off West Africa."""
@@ -283,18 +296,14 @@ def _service_points(
     latest: dict[str, FlowQuality] = {}
     for r in rows:
         latest.setdefault(r.remote_ip, r)
-    locations = {
-        loc.ip: loc
-        for loc in session.scalars(select(HopLocation).where(HopLocation.located)).all()
-    }
+    locations = _located_hops(session)
     best: dict[str, tuple[str, float, float, str | None, str | None, float]] = {}
     goodput: dict[str, float] = {}
     for r in latest.values():
         loc = locations.get(r.remote_ip)
         if loc is None or loc.lat is None or loc.lon is None:
             continue
-        asn = (r.asn or "").removeprefix("AS")
-        service = r.app or _ASN_ORG.get(asn, "") or (f"AS{asn}" if asn else "Unknown")
+        service = _service_name(r.app, r.asn)
         goodput[service] = goodput.get(service, 0.0) + (r.delivery_mbps or 0.0)
         rtt = r.min_rtt_ms if r.min_rtt_ms is not None else (r.srtt_ms or 1e9)
         if service not in best or rtt < best[service][5]:
@@ -348,10 +357,7 @@ def _hop_path(session: Session, network_id: int | None) -> tuple[str | None, lis
         )
         .order_by(Traceroute.hop)
     ).all()
-    locations = {
-        loc.ip: loc
-        for loc in session.scalars(select(HopLocation).where(HopLocation.located)).all()
-    }
+    locations = _located_hops(session)
     path: list[GeoHop] = []
     for h in hops:
         loc = locations.get(h.host) if h.host else None
@@ -477,9 +483,7 @@ def flow_services(
 
     groups: dict[str, list[FlowQuality]] = {}
     for r in latest.values():
-        asn = (r.asn or "").removeprefix("AS")
-        key = r.app or _ASN_ORG.get(asn, "") or (f"AS{asn}" if asn else "Unknown")
-        groups.setdefault(key, []).append(r)
+        groups.setdefault(_service_name(r.app, r.asn), []).append(r)
 
     out: list[ServiceQualityOut] = []
     for service, flows in groups.items():
