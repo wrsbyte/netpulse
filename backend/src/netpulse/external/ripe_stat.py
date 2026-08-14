@@ -16,7 +16,31 @@ from netpulse.logging import get_logger
 log = get_logger("ripestat")
 
 _URL = "https://stat.ripe.net/data/bgp-updates/data.json"
+_GEOLOC_URL = "https://stat.ripe.net/data/geoloc/data.json"
 _TIMEOUT = 15.0
+
+
+@dataclass(frozen=True, slots=True)
+class GeoLoc:
+    lat: float
+    lon: float
+    city: str | None
+    country: str | None
+
+
+def parse_geoloc(data: dict[str, object]) -> GeoLoc | None:
+    """First located resource's coordinates from a RIPEstat geoloc response. Pure and tested."""
+    located = data.get("located_resources") or []
+    if not isinstance(located, list) or not located:
+        return None
+    locations = located[0].get("locations") or []
+    if not locations:
+        return None
+    loc = locations[0]
+    lat, lon = loc.get("latitude"), loc.get("longitude")
+    if lat is None or lon is None:
+        return None
+    return GeoLoc(lat=float(lat), lon=float(lon), city=loc.get("city"), country=loc.get("country"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,4 +71,16 @@ async def bgp_summary(resource: str) -> BgpSummary | None:
             return summarize(resource, updates)
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         log.info("ripestat fetch failed", resource=resource, error=str(exc))
+        return None
+
+
+async def geolocate(ip: str) -> GeoLoc | None:
+    """Coarse geolocation of a public IP (RIPEstat, MaxMind-backed). None on failure/private IP."""
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(_GEOLOC_URL, params={"resource": ip})
+            resp.raise_for_status()
+            return parse_geoloc(resp.json().get("data", {}))
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        log.info("ripestat geoloc failed", ip=ip, error=str(exc))
         return None

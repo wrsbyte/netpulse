@@ -188,9 +188,22 @@ export interface GeoArc {
   loss_pct: number | null
 }
 
+export interface GeoHop {
+  hop: number
+  ip: string
+  lat: number
+  lon: number
+  city: string | null
+  country: string | null
+  rtt_ms: number | null
+  loss_pct: number | null
+}
+
 export interface GeoResponse {
   points: GeoPoint[]
   arcs: GeoArc[]
+  path: GeoHop[]
+  path_target: string | null
 }
 
 export interface ExperienceMetric {

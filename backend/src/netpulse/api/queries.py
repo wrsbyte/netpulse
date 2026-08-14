@@ -45,6 +45,7 @@ from netpulse.api.schemas import (
     FlowOut,
     FlowQualityOut,
     GeoArc,
+    GeoHop,
     GeoPoint,
     GeoResponse,
     HopPoint,
@@ -69,6 +70,7 @@ from netpulse.db.models import (
     Event,
     Flow,
     FlowQuality,
+    HopLocation,
     Network,
     PingRaw,
     RegionalBaseline,
@@ -244,7 +246,45 @@ def geo_map(session: Session, network_id: int | None) -> GeoResponse:
                 from_lat=you[0], from_lon=you[1], to_lat=loc[0], to_lon=loc[1],
                 out_of_country=p.out_of_country, rtt_ms=rtt, loss_pct=loss,
             ))
-    return GeoResponse(points=points, arcs=arcs)
+    target, path = _hop_path(session, network_id)
+    return GeoResponse(points=points, arcs=arcs, path=path, path_target=target)
+
+
+def _hop_path(session: Session, network_id: int | None) -> tuple[str | None, list[GeoHop]]:
+    """The geolocated hop-by-hop route to the primary internet target: each public hop RIPEstat
+    could place, in order, with the RTT/loss measured at that hop."""
+    target = next((t.host for t in get_config().targets if t.kind == "internet"), None)
+    if target is None:
+        return (None, [])
+    latest_ts = session.scalar(
+        select(func.max(Traceroute.ts)).where(
+            Traceroute.target == target, *_scope(Traceroute.network_id, network_id)
+        )
+    )
+    if latest_ts is None:
+        return (target, [])
+    hops = session.scalars(
+        select(Traceroute)
+        .where(
+            Traceroute.target == target, Traceroute.ts == latest_ts,
+            *_scope(Traceroute.network_id, network_id),
+        )
+        .order_by(Traceroute.hop)
+    ).all()
+    locations = {
+        loc.ip: loc
+        for loc in session.scalars(select(HopLocation).where(HopLocation.located)).all()
+    }
+    path: list[GeoHop] = []
+    for h in hops:
+        loc = locations.get(h.host) if h.host else None
+        if loc is None or loc.lat is None or loc.lon is None:
+            continue
+        path.append(GeoHop(
+            hop=h.hop, ip=h.host or "", lat=loc.lat, lon=loc.lon, city=loc.city,
+            country=loc.country, rtt_ms=h.rtt_ms, loss_pct=h.loss_pct,
+        ))
+    return (target, path)
 
 
 def _gateway_host() -> str | None:

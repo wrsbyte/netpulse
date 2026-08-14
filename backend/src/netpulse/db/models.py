@@ -249,3 +249,18 @@ class State(Base):
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(String)
+
+
+class HopLocation(Base):
+    """Cached geolocation of a traceroute hop IP (RIPEstat), so the map can draw the real route
+    without re-querying. Private/unlocatable IPs are cached as located=False to avoid retries."""
+
+    __tablename__ = "hop_location"
+
+    ip: Mapped[str] = mapped_column(String, primary_key=True)
+    ts: Mapped[float] = ts_column()
+    located: Mapped[bool] = mapped_column(Boolean)
+    lat: Mapped[float | None] = mapped_column(Float)
+    lon: Mapped[float | None] = mapped_column(Float)
+    city: Mapped[str | None] = mapped_column(String)
+    country: Mapped[str | None] = mapped_column(String)

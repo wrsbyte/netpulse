@@ -57,6 +57,7 @@ class Intervals(BaseModel):
     flow_quality: int = 30
     traceroute: int = 300
     wifi_scan: int = 900
+    hop_geo: int = 900
     public_ip: int = 300
     anycast: int = 300
     regional: int = 86400

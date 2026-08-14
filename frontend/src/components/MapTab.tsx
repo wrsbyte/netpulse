@@ -1,7 +1,7 @@
 import type { EChartsOption } from 'echarts'
 import { useEffect, useRef } from 'react'
 import { useGeo } from '../hooks'
-import type { GeoArc, GeoPoint } from '../lib/types'
+import type { GeoArc, GeoHop, GeoPoint } from '../lib/types'
 import { echarts } from '../lib/echarts-core'
 import { Panel } from './ui'
 
@@ -25,6 +25,14 @@ function pointTooltip(p: GeoPoint): string {
   if (p.rtt_ms != null) rows.push(`RTT ${p.rtt_ms.toFixed(0)} ms`)
   if (p.loss_pct != null) rows.push(`loss ${p.loss_pct.toFixed(1)}%`)
   if (p.kind === 'pop') rows.push(p.out_of_country ? 'routed abroad' : 'in-country POP')
+  return rows.join('<br/>')
+}
+
+function hopTooltip(h: GeoHop): string {
+  const where = [h.city, h.country].filter(Boolean).join(', ')
+  const rows = [`<b>Hop ${h.hop}${where ? ` — ${where}` : ''}</b>`, h.ip]
+  if (h.rtt_ms != null) rows.push(`RTT ${h.rtt_ms.toFixed(0)} ms`)
+  if (h.loss_pct != null) rows.push(`loss ${h.loss_pct.toFixed(1)}%`)
   return rows.join('<br/>')
 }
 
@@ -68,6 +76,19 @@ export function MapTab() {
         width: a.rtt_ms != null ? Math.min(1 + a.rtt_ms / 40, 4) : 1.2,
       },
     }))
+    const you = data.points.find((p) => p.kind === 'you')
+    const pathCoords = [
+      ...(you ? [[you.lon, you.lat]] : []),
+      ...data.path.map((h) => [h.lon, h.lat]),
+    ]
+    const pathLine = pathCoords.length >= 2 ? [{ coords: pathCoords }] : []
+    const hopPoints = data.path.map((h) => ({
+      name: h.city ?? h.ip,
+      value: [h.lon, h.lat],
+      symbolSize: 6,
+      itemStyle: { color: lossColor(h.loss_pct), borderColor: '#0b1017', borderWidth: 1 },
+      tooltip: { formatter: hopTooltip(h) },
+    }))
     const option: EChartsOption = {
       backgroundColor: 'transparent',
       tooltip: { trigger: 'item', backgroundColor: '#1a2432', textStyle: { color: '#e6edf7' } },
@@ -84,6 +105,21 @@ export function MapTab() {
           data: arcs,
           effect: { show: true, period: 4, trailLength: 0.2, symbol: 'arrow', symbolSize: 5 },
           lineStyle: { opacity: 0.75, curveness: 0.3 },
+        },
+        {
+          type: 'lines',
+          coordinateSystem: 'geo',
+          data: pathLine,
+          effect: { show: true, period: 5, trailLength: 0.4, symbol: 'circle', symbolSize: 3 },
+          lineStyle: { color: '#7dd3fc', width: 1.6, opacity: 0.9, type: 'dashed', curveness: 0 },
+          z: 3,
+        },
+        {
+          type: 'scatter',
+          coordinateSystem: 'geo',
+          data: hopPoints,
+          symbol: 'circle',
+          z: 4,
         },
         {
           type: 'effectScatter',
@@ -106,7 +142,7 @@ export function MapTab() {
   return (
     <Panel
       title="Route map"
-      subtitle="Where your traffic goes and how good each path is. Node size ∝ measured RTT; colour = loss (green <2%, amber <5%, red ≥5%); a red ring = a POP your ISP routes out of country."
+      subtitle="Your real route (dashed line = geolocated traceroute hops) and the CDN POPs serving you. Node size ∝ measured RTT; colour = loss (green <2%, amber <5%, red ≥5%); a red ring = a POP routed out of country."
     >
       <div ref={ref} style={{ height: 460 }} className="w-full" />
       <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted">
@@ -126,7 +162,9 @@ export function MapTab() {
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: '#f87171' }} />{' '}
           ≥5%
         </span>
-        <span>◯ red ring = routed abroad · bigger = higher RTT</span>
+        <span>
+          ┈ dashed = your traceroute route (hops) · ◯ red ring = routed abroad · bigger = higher RTT
+        </span>
       </div>
     </Panel>
   )

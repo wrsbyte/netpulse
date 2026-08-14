@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import re
@@ -24,7 +25,15 @@ from sqlalchemy.orm import Session
 from netpulse.aggregation import run_rollups
 from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
 from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
-from netpulse.db.models import AnycastPop, Event, Network, RegionalBaseline, State
+from netpulse.db.models import (
+    AnycastPop,
+    Event,
+    HopLocation,
+    Network,
+    RegionalBaseline,
+    State,
+    Traceroute,
+)
 from netpulse.db.session import get_session, init_engine
 from netpulse.external import ripe_atlas, ripe_stat
 from netpulse.logging import configure_logging, get_logger
@@ -49,6 +58,14 @@ from netpulse.shell import run as shrun
 log = get_logger("collector")
 
 _OUTAGE_CYCLES = 3  # consecutive all-internet-down ping cycles before an outage is declared
+_HOP_GEO_BATCH = 8  # new hop IPs to geolocate per run, to be gentle on the free RIPEstat endpoint
+
+
+def _is_public_ip(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
 
 
 class Collector:
@@ -71,6 +88,7 @@ class Collector:
         await self._guard(self._regional_baseline)()  # seed the outside-in baseline at startup
         await self._guard(self._wifi_events)()  # backfill recent disconnects immediately
         await self._guard(self._wifi_scan)()  # a full neighbour scan for channel congestion
+        await self._guard(self._hop_geo)()  # geolocate the current route's hops for the map
         log.info("starting", iface=self.iface, targets=len(self.config.targets),
                  network_id=self._network_id)
         self._schedule()
@@ -93,6 +111,7 @@ class Collector:
         add(self._guard(self._public_ip), "interval", seconds=iv.public_ip)
         add(self._guard(self._anycast), "interval", seconds=iv.anycast)
         add(self._guard(self._regional_baseline), "interval", seconds=iv.regional)
+        add(self._guard(self._hop_geo), "interval", seconds=iv.hop_geo)
         add(self._guard(self._rollup), "interval", seconds=iv.rollup)
         if self.config.active.enabled:
             add(self._guard(self.run_active), "interval", seconds=self.config.active.interval)
@@ -210,6 +229,29 @@ class Collector:
                     self._upsert_state(s, "bgp_stable", "1" if bgp.stable else "0")
             s.commit()
         log.info("regional baseline updated", country="MX", n=len(rtts))
+
+    async def _hop_geo(self) -> None:
+        """Geolocate new public traceroute-hop IPs via RIPEstat, cached — so the map can draw the
+        real hop-by-hop route. A few per run; private/unlocatable IPs are skipped."""
+        with _session() as s:
+            hop_ips = {
+                h for h in s.scalars(
+                    select(Traceroute.host).where(Traceroute.ts >= time.time() - 3600).distinct()
+                ).all() if h
+            }
+            cached = set(s.scalars(select(HopLocation.ip)).all())
+        todo = [ip for ip in hop_ips if ip not in cached and _is_public_ip(ip)]
+        for ip in todo[:_HOP_GEO_BATCH]:
+            loc = await ripe_stat.geolocate(ip)
+            with _session() as s:
+                s.add(HopLocation(
+                    ip=ip, ts=time.time(), located=loc is not None,
+                    lat=loc.lat if loc else None, lon=loc.lon if loc else None,
+                    city=loc.city if loc else None, country=loc.country if loc else None,
+                ))
+                s.commit()
+        if todo:
+            log.info("hop geo updated", new=min(len(todo), _HOP_GEO_BATCH))
 
     def _upsert_state(self, s: Session, key: str, value: str) -> None:
         state = s.get(State, key)

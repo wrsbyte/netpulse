@@ -184,9 +184,22 @@ class GeoArc(BaseModel):
     loss_pct: float | None = None
 
 
+class GeoHop(BaseModel):
+    hop: int
+    ip: str
+    lat: float
+    lon: float
+    city: str | None
+    country: str | None
+    rtt_ms: float | None
+    loss_pct: float | None
+
+
 class GeoResponse(BaseModel):
     points: list[GeoPoint]
     arcs: list[GeoArc]
+    path: list[GeoHop] = []  # the geolocated traceroute path (you -> hops -> destination)
+    path_target: str | None = None
 
 
 class MetricOut(BaseModel):
