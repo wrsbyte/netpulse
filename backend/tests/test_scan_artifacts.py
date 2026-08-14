@@ -38,8 +38,8 @@ def test_ping_samples_during_a_speedtest_are_dropped(tmp_path: Path) -> None:
     with get_session() as s:
         s.add_all([
             ActiveTest(ts=test_t, download_mbps=196.0, upload_mbps=195.0),
-            PingRaw(ts=test_t + 10, target="1.1.1.1", loss_pct=20.0, rtt_avg=190.0),  # during
-            PingRaw(ts=test_t + 40, target="1.1.1.1", loss_pct=0.0, rtt_avg=185.0),  # during
+            PingRaw(ts=test_t + 5, target="1.1.1.1", loss_pct=20.0, rtt_avg=190.0),  # during
+            PingRaw(ts=test_t + 20, target="1.1.1.1", loss_pct=0.0, rtt_avg=185.0),  # during
             PingRaw(ts=test_t - 20, target="1.1.1.1", loss_pct=0.0, rtt_avg=49.0),  # before, clean
             PingRaw(ts=now - 5, target="1.1.1.1", loss_pct=0.0, rtt_avg=50.0),  # after, clean
         ])

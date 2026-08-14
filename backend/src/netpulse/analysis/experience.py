@@ -23,7 +23,7 @@ class ExperienceInputs:
     dns_ms: float | None = None  # median resolver time
     # Real-time media path (measured on an ACTIVE UDP call/game peer), when one is live:
     media_jitter_ms: float | None = None
-    media_loss_pct: float | None = None
+    media_rtt_ms: float | None = None
     media_app: str | None = None
 
 
@@ -60,14 +60,16 @@ def _m(label: str, value: float | None, unit: str, good_below: float) -> Metric:
 
 
 def _calls(i: ExperienceInputs) -> ActivityVerdict:
-    # When a real call/game is live, rate its ACTUAL UDP path (measured on the peer), not proxies.
-    if _known(i.media_jitter_ms, i.media_loss_pct):
+    # When a real call/game is live, rate its ACTUAL path (measured on the peer). Use JITTER + RTT
+    # only — ICMP loss to a media server is unreliable (they rate-limit ICMP), so trusting it would
+    # condemn a good call; jitter of the replies that do return is the robust real signal.
+    if _known(i.media_jitter_ms):
         metrics = [
             _m("Jitter (live)", i.media_jitter_ms, "ms", 15),
-            _m("Loss (live)", i.media_loss_pct, "%", 1),
+            _m("Latency (live)", i.media_rtt_ms, "ms", 100),
         ]
-        good = all(m.ok for m in metrics if m.value is not None)
-        fair = (i.media_loss_pct or 0) < 3 and (i.media_jitter_ms or 0) < 30
+        good = (i.media_jitter_ms or 0) <= 15
+        fair = (i.media_jitter_ms or 0) < 30
         rating = _rate(good, fair)
         who = f" on your active call to {i.media_app}" if i.media_app else " on your active call"
         summary = {
@@ -104,7 +106,7 @@ def _browsing(i: ExperienceInputs) -> ActivityVerdict:
     if not _known(i.rtt_ms, i.dns_ms):
         return ActivityVerdict("Browsing", "unknown", "Not enough data yet.", metrics)
     good = all(m.ok for m in metrics if m.value is not None)
-    fair = (i.rtt_ms or 0) < 150 and (i.dns_ms or 0) < 120
+    fair = (i.rtt_ms or 0) < 150 and (i.dns_ms or 0) < 120 and (i.loss_pct or 0) < 5
     rating = _rate(good, fair)
     summary = {
         "good": "Pages open instantly.",

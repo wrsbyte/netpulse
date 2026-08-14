@@ -51,7 +51,7 @@ def test_calls_use_live_media_path_when_active() -> None:
     # A live call with clean UDP path -> good, and the summary names the app.
     vs = assess(ExperienceInputs(
         bufferbloat_ms=200, jitter_ms=40, loss_pct=8,  # proxies say poor...
-        media_jitter_ms=5, media_loss_pct=0.2, media_app="Meet",  # ...but the real call is clean
+        media_jitter_ms=5, media_rtt_ms=40, media_app="Meet",  # real call jitter is clean
     ))
     calls = next(v for v in vs if v.activity == "Video calls")
     assert calls.rating == "good"

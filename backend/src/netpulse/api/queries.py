@@ -91,8 +91,8 @@ from netpulse.quality import percentile
 _SOURCE_BY_NAME = {s.name: s for s in SOURCES}
 _COVERAGE_MAX_GAP = 60.0  # s between pings above which the collector was down (suspend), not idle
 _SCAN_GUARD = 4.0  # s around a WiFi scan whose ping samples are radio-off-channel artifacts
-_SPEEDTEST_BEFORE = 5  # s before a speedtest ts to start excluding (the saturation window)
-_SPEEDTEST_AFTER = 55  # s after a speedtest ts to keep excluding
+_SPEEDTEST_BEFORE = 2  # s before a speedtest ts to start excluding
+_SPEEDTEST_AFTER = 25  # s after the ts (test runs from its start ts; RTT recovers by ~+17 s)
 
 
 def _scope(
@@ -493,18 +493,24 @@ def sla(session: Session, window: int, window_label: str, network_id: int | None
     downs = [a.download_mbps for a in actives if a.download_mbps is not None]
     ups = [a.upload_mbps for a in actives if a.upload_mbps is not None]
     idles = [a.idle_latency for a in actives if a.idle_latency is not None]
+    # Uptime is computed over ACTUALLY-SAMPLED time, so its window must match raw retention — pings
+    # only exist for ~raw_hours, so a 7d request would otherwise divide 7d of downtime by ~48h of
+    # covered time and fabricate a breach. Capacity/latency above keep the full window (speedtests
+    # are retained). This uses the same covered-time definition as the verdict's availability.
+    up_start = now - min(window, get_config().retention.raw_hours * 3600)
+    # Only ISP-side outages count against the ISP contract — a local WiFi drop (detail 'wifi/lan')
+    # is the user's own link, not the ISP failing to deliver, so it must not fabricate a breach.
     outages = session.scalars(
         select(Event).where(
-            Event.kind == "outage", Event.ts >= start, *_scope(Event.network_id, network_id)
+            Event.kind == "outage", Event.detail == "isp", Event.ts >= up_start,
+            *_scope(Event.network_id, network_id),
         )
     ).all()
-    # Uptime over ACTUALLY-SAMPLED time (not wall-clock window), matching the verdict's availability
-    # — otherwise the SLA card and the verdict on the same report contradict each other.
     ping_ts = session.scalars(
-        select(PingRaw.ts).where(PingRaw.ts >= start, *_scope(PingRaw.network_id, network_id))
+        select(PingRaw.ts).where(PingRaw.ts >= up_start, *_scope(PingRaw.network_id, network_id))
     ).all()
     covered = covered_seconds(list(ping_ts), _COVERAGE_MAX_GAP)
-    downtime = _downtime(outages, start, now)
+    downtime = _downtime(outages, up_start, now)
     uptime = max(0.0, 100 * (1 - downtime / covered)) if covered else None
     measured = SlaMeasured(
         download_mbps=percentile(downs, 50) if downs else None,
@@ -639,7 +645,7 @@ def experience(session: Session, window: int, network_id: int | None) -> Experie
         rtt_ms=rtt_repr,
         loss_pct=typical_loss,
         media_jitter_ms=media.jitter_ms if media else None,
-        media_loss_pct=media.loss_pct if media else None,
+        media_rtt_ms=media.rtt_ms if media else None,
         media_app=media.app if media else None,
         jitter_ms=percentile(jitters, 95) if jitters else None,
         bufferbloat_ms=active.bufferbloat_ms if active else None,
@@ -875,7 +881,7 @@ def gather_stats(
     worst_target, typical_loss, loss_ci, loss_burst = _loss_stats(per_target)
 
     latency_p95, latency_excess = _latency_stats(pings)
-    latency_anomaly_z = _latency_anomaly(session, latency_p95, network_id)
+    latency_anomaly_z = _latency_anomaly(session, pings, network_id)
     ipv6_broken = _ipv6_broken(session, start, network_id, v4_ok=bool(pings))
 
     outages = session.scalars(
@@ -928,11 +934,14 @@ def gather_stats(
     hops = hop_stats(session, primary, start, network_id) if primary else []
     attribution = attribute(hops, corr, wifi_weak=signal_avg is not None and signal_avg <= -72)
 
-    # Segment split from RELIABLE end-to-end RTTs (not hop RTTs): the best-peered path's median
-    # is the access proxy, the worst path's median is the destination.
+    # Segment split from RELIABLE end-to-end RTTs (not hop RTTs): the best-peered path's median is
+    # the access proxy, the worst path's median is the destination. Restrict to `internet`-kind
+    # anycast resolvers — `work`/`site` hosts are simply far by geography, and mixing them in would
+    # book their fixed distance as "international transit" permanently (audit).
+    internet_only = {t.host for t in get_config().targets if t.kind == "internet"}
     per_target_rtt: dict[str, list[float]] = {}
     for p in pings:
-        if p.rtt_avg is not None:
+        if p.rtt_avg is not None and p.target in internet_only:
             per_target_rtt.setdefault(p.target, []).append(p.rtt_avg)
     medians = [percentile(v, 50) for v in per_target_rtt.values() if v]
     segment = segment_classify(min(medians), max(medians)) if medians else None
@@ -1016,25 +1025,32 @@ def _ipv6_broken(
 
 
 def _latency_anomaly(
-    session: Session, latency_p95: float | None, network_id: int | None
+    session: Session, pings: Sequence[PingRaw], network_id: int | None
 ) -> float | None:
-    """How anomalous the current latency is vs THIS link's own history (robust z over the retained
-    1-h rollups). Turns 'worse than an absolute number' into 'worse than your own normal', so a
-    legitimately-distant-but-stable connection isn't flagged and a real step-up is."""
-    if latency_p95 is None:
-        return None
-    baseline = [
-        p95
-        for p95 in session.scalars(
-            select(Agg.p95).where(
-                Agg.metric == "ping.rtt_avg", Agg.resolution == "1h",
-                Agg.tag.in_(_internet_hosts()), Agg.p95.is_not(None),
-                *_scope(Agg.network_id, network_id),
-            )
-        ).all()
-        if p95 is not None
-    ]
-    return robust_z(latency_p95, baseline)
+    """Most anomalous path: for each target, z-score its CURRENT p95 against that SAME target's own
+    1-h-rollup p95 history, then take the max. Comparing a target to itself (not a distance-mixed
+    pool of all targets) is what makes 'worse than your own normal' actually able to fire — a pooled
+    baseline's spread is dominated by target-to-target distance, so it never trips (audit)."""
+    by_target: dict[str, list[float]] = {}
+    for p in pings:
+        if p.rtt_avg is not None:
+            by_target.setdefault(p.target, []).append(p.rtt_avg)
+    zs: list[float] = []
+    for target, rtts in by_target.items():
+        baseline = [
+            p95
+            for p95 in session.scalars(
+                select(Agg.p95).where(
+                    Agg.metric == "ping.rtt_avg", Agg.resolution == "1h", Agg.tag == target,
+                    Agg.p95.is_not(None), *_scope(Agg.network_id, network_id),
+                )
+            ).all()
+            if p95 is not None
+        ]
+        z = robust_z(percentile(rtts, 95), baseline)
+        if z is not None:
+            zs.append(z)
+    return max(zs) if zs else None
 
 
 def _latency_stats(pings: Sequence[PingRaw]) -> tuple[float | None, float | None]:
