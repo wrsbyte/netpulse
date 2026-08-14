@@ -24,11 +24,12 @@ from netpulse import alerts
 from netpulse.aggregation import run_rollups
 from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
 from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
-from netpulse.db.models import Event, Network, State
+from netpulse.db.models import AnycastPop, Event, Network, State
 from netpulse.db.session import get_session, init_engine
 from netpulse.logging import configure_logging, get_logger
 from netpulse.probes import (
     active,
+    anycast,
     dns,
     flows,
     network,
@@ -79,6 +80,7 @@ class Collector:
         add(self._guard(self._traceroute), "interval", seconds=iv.traceroute)
         add(self._guard(self._wifi_scan), "interval", seconds=iv.wifi_scan)
         add(self._guard(self._public_ip), "interval", seconds=iv.public_ip)
+        add(self._guard(self._anycast), "interval", seconds=iv.anycast)
         add(self._guard(self._rollup), "interval", seconds=iv.rollup)
         if self.config.active.enabled:
             add(self._guard(self.run_active), "interval", seconds=self.config.active.interval)
@@ -149,6 +151,32 @@ class Collector:
                     continue
                 self._track_ip_change(s, family, value)
             s.commit()
+
+    async def _anycast(self) -> None:
+        rows = await anycast.sample(time.time())
+        if not rows:
+            return
+        self._stamp(rows)
+        with _session() as s:
+            for row in rows:
+                self._detect_pop_flip(s, row)
+                s.add(row)
+            s.commit()
+
+    def _detect_pop_flip(self, s: Session, row: AnycastPop) -> None:
+        prev = s.scalars(
+            select(AnycastPop)
+            .where(AnycastPop.provider == row.provider, AnycastPop.target == row.target)
+            .order_by(AnycastPop.ts.desc())
+            .limit(1)
+        ).first()
+        if prev and prev.colo and row.colo and prev.colo != row.colo:
+            s.add(Event(
+                ts=row.ts, end_ts=row.ts, kind="pop_flip", severity="info",
+                detail=f"{row.provider} {row.target}: {prev.colo} -> {row.colo}",
+                network_id=self._network_id,
+            ))
+            log.info("anycast POP flip", provider=row.provider, frm=prev.colo, to=row.colo)
 
     async def run_active(self) -> None:
         row = await active.sample(time.time())

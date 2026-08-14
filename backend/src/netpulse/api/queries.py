@@ -40,6 +40,7 @@ from netpulse.config import get_config
 from netpulse.db.models import (
     ActiveTest,
     Agg,
+    AnycastPop,
     DnsRaw,
     Event,
     Flow,
@@ -534,6 +535,7 @@ def gather_stats(
         .limit(1)
     ).first()
 
+    anycast_out = _anycast_out_of_country(session, start, network_id)
     signal_avg = sum(signals) / len(signals) if signals else None
     corr = _loss_retry_corr(session, hosts, start, network_id)
     primary = next((t.host for t in get_config().targets if t.kind == "internet"), None)
@@ -557,5 +559,26 @@ def gather_stats(
         dns_total=len(dns),
         attribution=attribution,
         loss_retry_corr=corr,
+        anycast_out=anycast_out,
         window_label=window_label,
     )
+
+
+def _anycast_out_of_country(
+    session: Session, start: float, network_id: int | None
+) -> list[tuple[str, str, str]]:
+    """Latest out-of-country POP per provider (deduped) over the window."""
+    rows = session.scalars(
+        select(AnycastPop)
+        .where(AnycastPop.ts >= start, *_scope(AnycastPop.network_id, network_id))
+        .order_by(AnycastPop.ts.desc())
+    ).all()
+    seen: set[str] = set()
+    out: list[tuple[str, str, str]] = []
+    for r in rows:
+        if r.provider in seen:
+            continue
+        seen.add(r.provider)
+        if r.out_of_country and r.colo and r.colo_country:
+            out.append((r.provider, r.colo, r.colo_country))
+    return out

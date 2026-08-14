@@ -71,12 +71,19 @@ async def _rdns(ip: str) -> str | None:
 
 
 async def _asn(ip: str) -> str | None:
-    if ":" in ip:  # IPv6 origin lookup differs; skip for now
-        return None
-    reversed_ip = ".".join(reversed(ip.split(".")))
-    res = await shell.run("dig", "+short", f"{reversed_ip}.origin.asn.cymru.com", "TXT", timeout=4)
+    query = _cymru_query(ip)
+    res = await shell.run("dig", "+short", query, "TXT", timeout=4)
     m = _ASN.search(res.stdout)
     return m.group(1) if m else None
+
+
+def _cymru_query(ip: str) -> str:
+    """Team Cymru origin-ASN query name for v4 or v6 (nibble-reversed for v6)."""
+    addr = ipaddress.ip_address(ip)
+    if addr.version == 6:
+        nibbles = addr.exploded.replace(":", "")
+        return ".".join(reversed(nibbles)) + ".origin6.asn.cymru.com"
+    return ".".join(reversed(ip.split("."))) + ".origin.asn.cymru.com"
 
 
 def extract_remotes(ss_output: str) -> dict[str, int]:

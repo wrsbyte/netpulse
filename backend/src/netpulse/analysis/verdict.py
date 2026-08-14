@@ -41,6 +41,8 @@ class WindowStats:
     dns_total: int = 0
     attribution: Attribution | None = None
     loss_retry_corr: float | None = None
+    # (provider, colo airport, colo country) for CDNs served from an out-of-country POP.
+    anycast_out: list[tuple[str, str, str]] = field(default_factory=list)
     window_label: str = ""
 
 
@@ -114,6 +116,14 @@ def conclude(stats: WindowStats) -> Verdict:
             "Weak WiFi signal",
             f"Average {stats.wifi_signal_avg:.0f} dBm (≤ {_WEAK_SIGNAL_DBM:.0f} is weak); "
             "move closer or change channel.",
+        ))
+
+    for provider, colo, country in stats.anycast_out:
+        findings.append(Finding(
+            "info",
+            f"{provider.title()} served from {colo} ({country})",
+            "out-of-country POP — the ISP routes this CDN abroad instead of an in-country POP, "
+            "adding international latency and loss. A different DNS/VPN may reach a closer POP.",
         ))
 
     if stats.dns_total:

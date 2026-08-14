@@ -55,6 +55,7 @@ class Intervals(BaseModel):
     traceroute: int = 300
     wifi_scan: int = 900
     public_ip: int = 300
+    anycast: int = 300
     rollup: int = 300
 
 

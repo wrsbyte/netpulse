@@ -170,6 +170,25 @@ class Event(NetworkScoped, Base):
     detail: Mapped[str] = mapped_column(String)
 
 
+class AnycastPop(NetworkScoped, Base):
+    """Which POP an anycast CDN is serving this host from — the actionable routing signal.
+
+    Cloudflare's ``cdn-cgi/trace`` reports the serving ``colo`` (airport). If that airport is
+    out-of-country while the CDN operates in-country POPs, the ISP is routing you the long way.
+    """
+
+    __tablename__ = "anycast_pop"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[float] = ts_column()
+    provider: Mapped[str] = mapped_column(String, index=True)  # "cloudflare"
+    target: Mapped[str] = mapped_column(String)  # the anycast IP probed
+    colo: Mapped[str | None] = mapped_column(String)  # serving POP airport code
+    colo_country: Mapped[str | None] = mapped_column(String)  # POP country (from IATA table)
+    client_country: Mapped[str | None] = mapped_column(String)  # your country (loc=)
+    out_of_country: Mapped[bool] = mapped_column(Boolean)
+
+
 class State(Base):
     """Key/value scratch for the collector (last counters, open events, public IP)."""
 
