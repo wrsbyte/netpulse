@@ -266,6 +266,26 @@ def geo_map(session: Session, network_id: int | None) -> GeoResponse:
     return GeoResponse(points=points, arcs=arcs, path=path, path_target=target)
 
 
+def _latest_flows(
+    session: Session, start: float, network_id: int | None
+) -> dict[str, FlowQuality]:
+    """The most-recent FlowQuality row per remote IP in the window — fetched via a max(ts) subquery
+    (only the latest rows), not by hydrating the whole window and keeping the first of each."""
+    latest_ts = (
+        select(FlowQuality.remote_ip, func.max(FlowQuality.ts).label("mts"))
+        .where(FlowQuality.ts >= start, *_scope(FlowQuality.network_id, network_id))
+        .group_by(FlowQuality.remote_ip)
+        .subquery()
+    )
+    rows = session.scalars(
+        select(FlowQuality).join(
+            latest_ts,
+            (FlowQuality.remote_ip == latest_ts.c.remote_ip) & (FlowQuality.ts == latest_ts.c.mts),
+        )
+    ).all()
+    return {r.remote_ip: r for r in rows}
+
+
 def _service_name(app: str | None, asn: str | None) -> str:
     """Human label for a flow: its classified app, else a named ASN org, else the bare ASN."""
     num = (asn or "").removeprefix("AS")
@@ -294,15 +314,7 @@ def _service_points(
 ) -> tuple[list[GeoPoint], list[GeoArc]]:
     """Every service you actually talk to, geolocated (RIPEstat, cached) and sized by its base RTT
     — so the map shows all your CDNs/destinations, not just the one anycast POP we can trace."""
-    start = time.time() - 1800
-    rows = session.scalars(
-        select(FlowQuality)
-        .where(FlowQuality.ts >= start, *_scope(FlowQuality.network_id, network_id))
-        .order_by(FlowQuality.ts.desc())
-    ).all()
-    latest: dict[str, FlowQuality] = {}
-    for r in rows:
-        latest.setdefault(r.remote_ip, r)
+    latest = _latest_flows(session, time.time() - 1800, network_id)
     locations = _located_hops(session)
     best: dict[str, tuple[str, float, float, str | None, str | None, float]] = {}
     goodput: dict[str, float] = {}
@@ -426,15 +438,7 @@ def recent_flow_quality(
     session: Session, window: int, network_id: int | None, limit: int = 40
 ) -> list[FlowQualityOut]:
     """Latest passive transport-quality per endpoint over the window, worst congestion first."""
-    start = time.time() - window
-    rows = session.scalars(
-        select(FlowQuality)
-        .where(FlowQuality.ts >= start, *_scope(FlowQuality.network_id, network_id))
-        .order_by(FlowQuality.ts.desc())
-    ).all()
-    latest: dict[str, FlowQuality] = {}
-    for r in rows:
-        latest.setdefault(r.remote_ip, r)  # first seen = most recent (desc order)
+    latest = _latest_flows(session, time.time() - window, network_id)
 
     def excess(r: FlowQuality) -> float | None:
         if r.srtt_ms is not None and r.min_rtt_ms is not None:
@@ -518,15 +522,7 @@ def flow_services(
 ) -> list[ServiceQualityOut]:
     """Passive transport quality collapsed by SERVICE (app name, else ASN org) instead of a wall of
     raw endpoint IPs — how each service you actually use is performing, most-used first."""
-    start = time.time() - window
-    rows = session.scalars(
-        select(FlowQuality)
-        .where(FlowQuality.ts >= start, *_scope(FlowQuality.network_id, network_id))
-        .order_by(FlowQuality.ts.desc())
-    ).all()
-    latest: dict[str, FlowQuality] = {}
-    for r in rows:
-        latest.setdefault(r.remote_ip, r)  # most-recent sample per endpoint
+    latest = _latest_flows(session, time.time() - window, network_id)
 
     groups: dict[str, list[FlowQuality]] = {}
     for r in latest.values():
