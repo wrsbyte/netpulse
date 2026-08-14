@@ -36,6 +36,7 @@ from netpulse.probes import (
     network,
     ping,
     public_ip,
+    tcp_connect,
     throughput,
     traceroute,
     wifi,
@@ -74,6 +75,7 @@ class Collector:
         add = self.scheduler.add_job
         add(self._guard(self._sync_network), "interval", seconds=iv.network)
         add(self._guard(self._ping), "interval", seconds=iv.ping)
+        add(self._guard(self._tcp_connect), "interval", seconds=iv.tcp_connect)
         add(self._guard(self._wifi), "interval", seconds=iv.wifi)
         add(self._guard(self._throughput), "interval", seconds=iv.throughput)
         add(self._guard(self._dns), "interval", seconds=iv.dns)
@@ -119,6 +121,12 @@ class Collector:
             s.add(row)
             self._detect_roaming(s, row.ts, row.bssid)
             s.commit()
+
+    async def _tcp_connect(self) -> None:
+        targets = [
+            (t.host, 443) for t in self.config.targets if t.kind in ("internet", "site", "work")
+        ]
+        self._persist(await tcp_connect.sample(time.time(), targets))
 
     async def _throughput(self) -> None:
         row = await throughput.sample(time.time(), self.iface)

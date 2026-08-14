@@ -170,6 +170,20 @@ class Event(NetworkScoped, Base):
     detail: Mapped[str] = mapped_column(String)
 
 
+class TcpConnect(NetworkScoped, Base):
+    """Active TCP-handshake latency (SYN→SYN/ACK) — the app-relevant, non-ICMP-deprioritized
+    latency signal; also traverses hosts that filter ICMP. status: ok | refused | filtered."""
+
+    __tablename__ = "tcp_connect"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[float] = ts_column()
+    target: Mapped[str] = mapped_column(String, index=True)
+    port: Mapped[int] = mapped_column(Integer)
+    connect_ms: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String)
+
+
 class FlowQuality(NetworkScoped, Base):
     """Passive per-endpoint transport quality from the kernel (`ss -ti`).
 
