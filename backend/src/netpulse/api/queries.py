@@ -824,8 +824,11 @@ def _channel_advice(
     ).all()
     if not scans:
         return None
+    own_bssid = latest_wifi.bssid if latest_wifi else None
     by_channel: dict[int, set[str | None]] = {}
     for sc in scans:
+        if sc.bssid == own_bssid:  # don't count our own AP as congestion in our own block
+            continue
         by_channel.setdefault(sc.channel, set()).add(sc.bssid)
     channels = [ch for ch, bssids in by_channel.items() for _ in bssids]
     return analyze_channel(current, channels)

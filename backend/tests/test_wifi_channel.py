@@ -35,3 +35,27 @@ def test_continuous_hours_counts_time_stuck_on_current_channel() -> None:
 def test_continuous_hours_none_when_no_current() -> None:
     assert continuous_hours([(1.0, 149)], None) is None
     assert continuous_hours([], 149) is None
+
+
+def test_block_aware_a_neighbour_on_40_counts_against_36() -> None:
+    # At 80 MHz, channel 40 is inside your 36-48 block: 4 neighbours across 36/40/44/48 make your
+    # block crowded even though no single channel has 4.
+    a = analyze(current=36, scan_channels=[36, 40, 44, 48])
+    assert a.aps_on_current == 4  # whole block, not just ch 36
+    assert a.crowded
+    assert a.best_alternative == 149  # the other non-DFS block
+
+
+def test_block_aware_on_the_cleanest_block_is_not_crowded() -> None:
+    # 2 neighbours in your 36 block, 4 in the 149 block -> you're already on the best; stay put.
+    a = analyze(current=36, scan_channels=[40, 44, 149, 153, 157, 161])
+    assert a.aps_on_current == 2
+    assert not a.crowded
+    assert a.best_alternative is None
+
+
+def test_block_aware_never_recommends_a_dfs_block() -> None:
+    # Even if UNII-2 (52-64, DFS) were empty, we only offer the non-DFS blocks (36 / 149).
+    a = analyze(current=149, scan_channels=[149] * 6)
+    assert a.crowded
+    assert a.best_alternative == 36

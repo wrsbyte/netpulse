@@ -229,8 +229,8 @@ def _wifi_findings(stats: WindowStats) -> list[Finding]:
         )
         out.append(Finding(
             "warning", f"WiFi channel {ca.current} is crowded",
-            f"{ca.aps_on_current} APs share your 5 GHz channel{stuck_txt}; switch the router to "
-            f"channel {ca.best_alternative} ({ca.alternative_aps} APs, no DFS).",
+            f"{ca.aps_on_current} APs share your 5 GHz 80 MHz block{stuck_txt}; switch the router "
+            f"to channel {ca.best_alternative} ({ca.alternative_aps} APs in that block, no DFS).",
         ))
     return out
 

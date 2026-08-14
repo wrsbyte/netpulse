@@ -10,9 +10,23 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
-# 5 GHz UNII-1 channels: no DFS (no radar-detection drops), safe to pin.
-_CLEAN_5G = (36, 40, 44, 48)
-_CROWDED = 4  # APs on your channel (including you) at/above which it's worth moving
+# 80 MHz blocks by primary channel. An 80 MHz link occupies its whole block, so congestion is a
+# per-block property: a neighbour on 40 competes with you on 36. UNII-1 and UNII-3 are non-DFS
+# (no radar-triggered drops), so they're the safe blocks to pin an 80 MHz link to.
+_BLOCKS_5G = {
+    36: (36, 40, 44, 48),  # UNII-1
+    149: (149, 153, 157, 161, 165),  # UNII-3
+}
+_CROWDED = 4  # neighbour APs in your 80 MHz block at/above which moving blocks is worth it
+
+
+def _block_primary(channel: int | None) -> int | None:
+    if channel is None:
+        return None
+    for primary, channels in _BLOCKS_5G.items():
+        if channel in channels:
+            return primary
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,14 +54,22 @@ def continuous_hours(samples: list[tuple[float, int | None]], current: int | Non
 
 
 def analyze(current: int | None, scan_channels: list[int]) -> ChannelAdvice:
+    """Which non-DFS 80 MHz block is cleanest. ``scan_channels`` is the neighbours' channels (your
+    own AP excluded upstream). On 5 GHz, congestion is counted per block; the fallback for 2.4 GHz
+    or an unknown channel is the single-channel count."""
     counts = Counter(scan_channels)
-    on_current = counts.get(current, 0) if current is not None else 0
-    # Pick the least-crowded clean channel that isn't the current one.
-    candidates = sorted(
-        (ch for ch in _CLEAN_5G if ch != current), key=lambda ch: counts.get(ch, 0)
-    )
-    best = candidates[0] if candidates else None
-    best_aps = counts.get(best, 0) if best is not None else 0
+    current_block = _block_primary(current)
+    if current_block is None:
+        on_current = counts.get(current, 0) if current is not None else 0
+        return ChannelAdvice(current, on_current, None, 0, False)
+
+    def block_aps(primary: int) -> int:
+        return sum(counts.get(ch, 0) for ch in _BLOCKS_5G[primary])
+
+    on_current = block_aps(current_block)
+    alternatives = sorted((p for p in _BLOCKS_5G if p != current_block), key=block_aps)
+    best = alternatives[0] if alternatives else None
+    best_aps = block_aps(best) if best is not None else 0
     crowded = on_current >= _CROWDED and best is not None and best_aps < on_current
     return ChannelAdvice(
         current=current, aps_on_current=on_current,
