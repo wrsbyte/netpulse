@@ -274,5 +274,6 @@ export interface Status {
   latest_mos: number | null
   current_rx_mbps: number | null
   current_tx_mbps: number | null
+  collector_healthy: boolean
   interface: string
 }

@@ -114,6 +114,7 @@ class Collector:
         add(self._guard(self._regional_baseline), "interval", seconds=iv.regional)
         add(self._guard(self._hop_geo), "interval", seconds=iv.hop_geo)
         add(self._guard(self._rollup), "interval", seconds=iv.rollup)
+        add(self._guard(self._heartbeat), "interval", seconds=10)
         if self.config.active.enabled:
             add(self._guard(self.run_active), "interval", seconds=self.config.active.interval)
 
@@ -261,6 +262,13 @@ class Collector:
                 s.commit()
         if todo:
             log.info("hop geo updated", new=min(len(todo), _HOP_GEO_BATCH))
+
+    async def _heartbeat(self) -> None:
+        """Stamp a liveness marker so the API/UI can tell a live dashboard from a stale one (a
+        crashed collector otherwise looks identical to a healthy idle connection)."""
+        with _session() as s:
+            self._upsert_state(s, "collector_heartbeat", str(time.time()))
+            s.commit()
 
     def _client_country(self) -> str:
         """The country the PC is currently in, from the latest anycast client geolocation; MX if

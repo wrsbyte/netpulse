@@ -1,4 +1,5 @@
-import { useSpeedtest } from '../hooks'
+import { useSpeedtest, useStatus } from '../hooks'
+import { useUi } from '../store'
 import { fmt } from '../lib/format'
 import { NetworkSelector } from './NetworkSelector'
 import { RangeSelector } from './RangeSelector'
@@ -6,12 +7,22 @@ import { RangeSelector } from './RangeSelector'
 export function Header() {
   const speedtest = useSpeedtest()
   const result = speedtest.data
+  const range = useUi((s) => s.range)
+  const { data: status, isError } = useStatus(range)
+  const healthy = !isError && status?.collector_healthy
   return (
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-2">
-        <span className="inline-block h-2.5 w-2.5 rounded-full bg-accent" />
+        <span
+          className={`inline-block h-2.5 w-2.5 rounded-full ${healthy ? 'bg-ok' : 'bg-danger'}`}
+          title={
+            healthy ? 'Collector is running' : 'Collector is not reporting — data may be stale'
+          }
+        />
         <h1 className="text-lg font-semibold text-ink">netpulse</h1>
-        <span className="text-xs text-muted">local network health</span>
+        <span className="text-xs text-muted">
+          {healthy ? 'local network health' : 'collector offline — data may be stale'}
+        </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <NetworkSelector />

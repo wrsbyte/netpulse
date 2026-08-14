@@ -702,6 +702,8 @@ def status(session: Session, window: int, interface: str, network_id: int | None
     )
     ipv4 = session.get(State, "public_ipv4")
     ipv6 = session.get(State, "public_ipv6")
+    heartbeat = session.get(State, "collector_heartbeat")
+    collector_healthy = heartbeat is not None and now - float(heartbeat.value) < 30
     latest_tput = session.scalars(
         select(ThroughputRaw)
         .where(ThroughputRaw.ts >= now - 30, *_scope(ThroughputRaw.network_id, network_id))
@@ -725,6 +727,7 @@ def status(session: Session, window: int, interface: str, network_id: int | None
         latest_mos=latest_active.mos if latest_active else None,
         current_rx_mbps=latest_tput.rx_bps / 1e6 if latest_tput else None,
         current_tx_mbps=latest_tput.tx_bps / 1e6 if latest_tput else None,
+        collector_healthy=collector_healthy,
         interface=interface,
     )
 

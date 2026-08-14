@@ -270,4 +270,5 @@ class Status(BaseModel):
     latest_mos: float | None
     current_rx_mbps: float | None  # live download throughput in use right now
     current_tx_mbps: float | None  # live upload throughput in use right now
+    collector_healthy: bool  # the sampling daemon stamped a heartbeat recently
     interface: str
