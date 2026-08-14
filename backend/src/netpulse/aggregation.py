@@ -87,13 +87,43 @@ def _rollup_5m_to_1h(session: Session, source: MetricSource, since: float) -> No
         )
     ).all()
 
-    grouped: dict[GroupKey, list[float]] = {}
+    grouped: dict[GroupKey, list[Agg]] = {}
     for row in rows:
         if row.avg is None:
             continue
-        grouped.setdefault((_bucket(row.bucket, _1H), row.network_id, row.tag), []).append(row.avg)
+        grouped.setdefault((_bucket(row.bucket, _1H), row.network_id, row.tag), []).append(row)
 
-    _replace_buckets(session, "1h", source.name, since, grouped)
+    session.execute(
+        delete(Agg).where(
+            Agg.resolution == "1h", Agg.metric == source.name, Agg.bucket >= since
+        )
+    )
+    for (bucket, network_id, tag), aggs in grouped.items():
+        session.add(_combine_aggs(bucket, network_id, tag, source.name, aggs))
+
+
+def _combine_aggs(
+    bucket: float, network_id: int | None, tag: str, metric: str, aggs: list[Agg]
+) -> Agg:
+    """Roll 5-min aggregates into a 1-h one WITHOUT collapsing to a mean-of-means.
+
+    min/max carry up exactly; avg is sample-count weighted; n is the true underlying sample
+    count. p95 does not compose, so it is estimated as the max of the 5-min p95s — a defensible
+    'typical worst-5-min tail' that preserves the spike, instead of the p95 of the averages
+    (which smooths the tail away and understates the 7d view).
+    """
+    total_n = sum(a.n for a in aggs) or 1
+    mns = [a.mn for a in aggs if a.mn is not None]
+    mxs = [a.mx for a in aggs if a.mx is not None]
+    p95s = [a.p95 for a in aggs if a.p95 is not None]
+    return Agg(
+        bucket=bucket, network_id=network_id, resolution="1h", metric=metric, tag=tag,
+        avg=sum((a.avg or 0.0) * a.n for a in aggs) / total_n,
+        mn=min(mns) if mns else None,
+        mx=max(mxs) if mxs else None,
+        p95=max(p95s) if p95s else None,
+        n=sum(a.n for a in aggs),
+    )
 
 
 def _replace_buckets(
