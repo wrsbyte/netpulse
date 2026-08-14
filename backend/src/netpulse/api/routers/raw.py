@@ -15,9 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from netpulse.api import queries
 from netpulse.api.deps import db, resolve_network, window_for
-from netpulse.api.queries import ColSpec, RawQuery
+from netpulse.api.raw_queries import ColSpec, RawQuery, raw_page, raw_rows
 from netpulse.api.schemas import RawPage
 from netpulse.db.models import DnsRaw, Event, Flow, PingRaw, Traceroute
 
@@ -141,7 +140,7 @@ def get_raw(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> RawPage:
     model, specs, rq = _query(session, name, range, network, q, sort, dir, f)
-    return queries.raw_page(session, model, specs, rq, limit, offset)
+    return raw_page(session, model, specs, rq, limit, offset)
 
 
 @router.get("/{name}/export.csv")
@@ -157,7 +156,7 @@ def export_csv(
 ) -> StreamingResponse:
     model, specs, rq = _query(session, name, range, network, q, sort, dir, f)
     names = [s.name for s in specs]
-    rows = queries.raw_rows(session, model, specs, rq, limit=_EXPORT_CAP)
+    rows = raw_rows(session, model, specs, rq, limit=_EXPORT_CAP)
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=names)
     writer.writeheader()
