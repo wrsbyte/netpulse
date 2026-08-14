@@ -133,3 +133,10 @@ Make the analysis defensible, not eyeballed.
   extra probes.
 
 Each milestone is independently shippable and leaves `make check` green.
+
+## PF — Remove alerts/notifications (final)
+
+The threshold-alert engine and desktop notifications are not wanted: netpulse is a diagnostic
+dashboard, not a notifier. Remove `alerts.py`, its collector job, the `alerts` config, the
+`alert` event kind, and any notify-send path. The verdict + events + Routes surface the state;
+no push notifications.
