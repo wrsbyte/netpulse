@@ -67,6 +67,33 @@ and no headline conclusion rests on a single vantage or a synthetic panel.
     (e.g. 20:00–23:00 vs 04:00–06:00 local) and split exploratory vs confirmatory windows (no
     HARKing).
 
+## The two decisions this must resolve (pre-registered)
+
+These are the answers that matter for the user; the design is built to make each *falsifiable*,
+with the thresholds written down before the confirmatory window (no HARKing).
+
+**Decision A — local/last-mile oversubscription vs transit/peering congestion** (opposite
+fixability). The **local path is a first-class co-measured control class**: gateway RTT/loss, the
+first-N ISP hops (the access/aggregation network *before* the border AS), and a locally-peered
+control (short AS-path host reachable via the national IXP). Every path sample is split into
+**pre-border excess vs post-border excess** using the mtr AS-path (the border AS = where you leave
+the ISP). Pre-registered rule:
+- local segment (gateway + first ISP hops + IXP control) **degrades at peak** → *access-network
+  oversubscription* — **not** user-fixable, VPN won't help;
+- local **flat** at peak but international **degrades** → *transit/peering congestion beyond the
+  border* — candidate VPN-fixable → **confirm with the WARP crossover**;
+- both degrade → decompose by where excess accumulates along the hop ramp.
+Shared-border/different-transit destination pairs are the clean identifier (same access, different
+transit → a divergence localizes the tier by difference-in-differences).
+
+**Decision B — "is my ISP bad, or is this normal for the region?"** Never answerable inside-out, so
+metrics are reported **region-relative**, not absolute: `excess_relative = user_excess −
+regional_median_excess(ASN, region)`, and the peering signal is a **percentile within region**
+("worse than X% of comparable MX / AS13999 connections"), not an absolute letter that would brand
+physics or region-wide reality a fault. Regional distributions come from RIPE Atlas (MX probes on
+the ISP's AS + neighbours), Cloudflare Radar, and M-Lab NDT — all free, cached offline, refreshed
+weekly, degrading gracefully to a clearly-labelled lower-confidence inside-out verdict when offline.
+
 ## New measurements (superset)
 
 Per-flow passive (`ss -ti`) · TCP-connect / QUIC / TTFB active · ICMP+mtr (path, with AS-path,
