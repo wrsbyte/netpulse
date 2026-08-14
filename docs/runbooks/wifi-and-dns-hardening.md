@@ -105,11 +105,28 @@ it's a router setting. In the router admin (http://192.168.100.1):
 **Verify:** `iw dev wlan0 link | grep freq` → `freq: 5180` (ch 36) or `5200` (ch 40).
 netpulse's "WiFi channel N is crowded" finding clears once the scan re-reads the new channel.
 
-## After applying — prove the improvement
+## After applying — measured, with the honest caveat
 
-Let netpulse run 24 h post-change, then compare the same `dns-compare` window and
-the disconnect count. Record before/after here:
+Cutover ~2026-08-13 23:30. First check ~7 h later hit a real methodology trap worth
+recording: the laptop **suspended overnight (01:42–07:08, a 5.4 h collection gap)**, so
+wall-clock "after" was 7.7 h but only ~2.3 h were actually sampled. netpulse now detects
+this (`covered_seconds`) and flags "Partial data — device was asleep" below 90% coverage;
+availability is computed over covered time, not the gap.
+
+What the short awake window supports:
+
+- **Rate metrics (trustworthy — computed over ~22 k samples, gap-insensitive):**
+  end-to-end loss to 8.8.8.8 / 9.9.9.9 ~1.0% → ~0.36%; DNS failures Quad9 2.05% → 0.75%,
+  Google 3.7% → 1.33%. Loss to the **gateway** (pure local WiFi segment) fell from
+  ~1–3.9%/h during the power-save + channel-149 period to ~0–0.44%/h after — isolating the
+  gain to the WiFi changes, not DNS.
+- **Outage count (NOT yet conclusive):** 6 outages in 8 solid pre-fix hours (0.75/h) vs
+  0 in ~2 solid post-fix hours. But P(0 in 2 h | rate 0.75/h) ≈ 22% — too little data to
+  claim a magnitude. Needs a full **awake** day, not just wall-clock.
+
+Verdict: direction is positive and consistent (grade A on the clean 6 h window, all rate
+metrics down), but **promising, not proven** until a full waking day accumulates. Re-run
+this comparison then and require coverage ≥ 90% before trusting outage-rate deltas.
 
 - DNS (before, 7d): Quad9 j=4/fail=1.2%, Google j=30/fail=2.9%, Cloudflare j=55/fail=7.1%.
-- Power-save (before): `on`; disconnects/24h `locally_generated`: 9/10.
-- After: _(fill in from netpulse once 24 h of post-change data exists)_.
+- Power-save (before): `on`; disconnects `locally_generated`: 9/10.
