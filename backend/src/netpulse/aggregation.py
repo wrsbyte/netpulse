@@ -51,7 +51,8 @@ SOURCES: tuple[MetricSource, ...] = (
     MetricSource("ping.jitter", PingRaw, "jitter", "target"),
     MetricSource("wifi.signal_dbm", WifiRaw, "signal_dbm"),
     MetricSource("wifi.tx_bitrate", WifiRaw, "tx_bitrate"),
-    MetricSource("wifi.tx_retries", WifiRaw, "tx_retries"),
+    # tx_retries is a cumulative counter; averaging it as a series is meaningless (it only ever
+    # rises and resets on reconnect). The loss/retry *correlation* uses per-bucket deltas instead.
     MetricSource("throughput.rx_bps", ThroughputRaw, "rx_bps"),
     MetricSource("throughput.tx_bps", ThroughputRaw, "tx_bps"),
     MetricSource("dns.query_ms", DnsRaw, "query_ms", "resolver"),

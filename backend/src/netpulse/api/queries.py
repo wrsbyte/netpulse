@@ -973,7 +973,6 @@ def gather_stats(
         select(WifiRaw).where(WifiRaw.ts >= start, *_scope(WifiRaw.network_id, network_id))
     ).all()
     signals = [w.signal_dbm for w in wifi if w.signal_dbm is not None]
-    retries = [w.tx_retries for w in wifi if w.tx_retries is not None]
     latest_wifi = wifi[-1] if wifi else None
     power_save = latest_wifi.power_save if latest_wifi else None
     channel_advice = _channel_advice(session, latest_wifi, start, network_id)
@@ -1032,7 +1031,6 @@ def gather_stats(
         worst_outage_cause=worst_cause,
         worst_target=worst_target,
         wifi_signal_avg=signal_avg,
-        wifi_retries_max=max(retries) if retries else None,
         wifi_power_save=power_save,
         channel_advice=channel_advice,
         hours_on_channel=hours_on_channel,

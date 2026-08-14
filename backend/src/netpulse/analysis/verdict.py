@@ -46,7 +46,6 @@ class WindowStats:
     worst_outage_cause: str | None = None  # "isp" | "wifi/lan"
     worst_target: tuple[str, float] | None = None  # (host, loss%)
     wifi_signal_avg: float | None = None
-    wifi_retries_max: int | None = None
     wifi_power_save: bool | None = None
     channel_advice: ChannelAdvice | None = None
     hours_on_channel: float | None = None  # continuous time on the current 5 GHz channel

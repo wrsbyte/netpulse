@@ -210,14 +210,15 @@ class Collector:
             s.commit()
 
     async def _regional_baseline(self) -> None:
-        rtts = await ripe_atlas.regional_rtts("MX")
+        country = self._client_country()  # the PC roams — compare against wherever it actually is
+        rtts = await ripe_atlas.regional_rtts(country)
         if not rtts:
             return
         now = time.time()
         user = await ping.sample(now, ripe_atlas.K_ROOT_IP)  # our own RTT to the same reference
         with _session() as s:
             s.add(RegionalBaseline(
-                ts=now, source="ripe_atlas", target=ripe_atlas.K_ROOT_IP, country="MX",
+                ts=now, source="ripe_atlas", target=ripe_atlas.K_ROOT_IP, country=country,
                 metric="rtt_ms", values_json=json.dumps(rtts), n=len(rtts),
             ))
             if user.rtt_avg is not None:
@@ -260,6 +261,18 @@ class Collector:
                 s.commit()
         if todo:
             log.info("hop geo updated", new=min(len(todo), _HOP_GEO_BATCH))
+
+    def _client_country(self) -> str:
+        """The country the PC is currently in, from the latest anycast client geolocation; MX if
+        unknown — so the regional comparison follows the machine instead of assuming Mexico."""
+        with _session() as s:
+            cc = s.scalars(
+                select(AnycastPop.client_country)
+                .where(AnycastPop.client_country.is_not(None))
+                .order_by(AnycastPop.ts.desc())
+                .limit(1)
+            ).first()
+        return cc or "MX"
 
     def _upsert_state(self, s: Session, key: str, value: str) -> None:
         state = s.get(State, key)
