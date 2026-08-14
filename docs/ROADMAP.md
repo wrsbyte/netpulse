@@ -5,21 +5,74 @@ Where netpulse is, and where it goes next. The north star: the system should not
 it and reads a verdict: *"your internet was degraded 8 % of the last 24 h; root cause =
 packet loss starting at ISP hop 8; your WiFi was healthy."*
 
-## Current state (v0.1)
+## Current state (v0.2)
 
-Done and running: 9 probes (ping, wifi, dns, throughput, traceroute/mtr, flows, wifi_scan,
-public_ip, active/Ookla), SQLite store with raw→5m→1h rollups + retention, FastAPI + React
-dashboard (6h/24h/7d), derived outages/roaming/IP-change/alerts, bufferbloat grade + MOS,
-systemd autostart. `make check` green (ruff, mypy strict, pytest, oxlint, tsc).
+Probes: ping (IPv4 **and IPv6**), wifi, wifi_events, dns (plain **and DoT**), throughput,
+tcp_connect, traceroute/mtr, flows, flow_quality (passive TCP `ss -ti`), **media (UDP/QUIC
+call/game path)**, wifi_scan, public_ip, anycast (CDN POP), regional (RIPE Atlas), hop_geo
+(RIPEstat geolocation), active/Ookla. SQLite with raw→5m→1h rollups + retention (**all
+append-only tables pruned**, composite indexes). FastAPI + React dashboard (6h/24h/7d), first-class
+network identity, raw-data explorer (`api/raw_queries.py`) with CSV export.
 
-What it does **not** yet do: draw conclusions, show raw data, detect anomalies against a
-baseline, localize loss to a hop automatically, or produce a shareable report.
+Analyzes and concludes: A–F health score, automatic loss **attribution** to a layer/hop,
+per-activity **experience** ratings (calls use the real UDP path when a call is live), **latency
+anomaly** vs the link's own history, **peering-outlier** and **transit-vs-access** segmentation,
+**SLA contract-vs-delivered**, and a shareable **forensic HTML report**. Self-induced noise (WiFi
+scans, speedtests) and collection gaps (device sleep) are excluded from grading; a **collector
+heartbeat** surfaces "data may be stale".
+
+Verified: `make check` green (ruff, mypy strict, 120 pytest), frontend oxlint + tsc, **6 Playwright
+e2e** (every tab, no console errors), `doctor.sh` 11/11.
+
+Still open (see backlog): cross-network comparison (N5), change-point narrative (B2), distribution/
+heatmap views (B4), own bufferbloat test (B6), Alembic (C1), Spanish UI (F1), per-process bytes (H1).
+
+---
+
+## Delivered — audit hardening + roadmap features (2026-08-14)
+
+A 4-expert unbiased audit (correctness/SRE, UX/data-viz, product/features, code/architecture)
+drove a hardening + feature push. All landed with tests and `make check` + e2e green.
+
+**Correctness fixes (from the audit):**
+- Self-induced noise excluded from grading: WiFi-scan and speedtest ping samples (they spike every
+  target — the gateway too — which is physically impossible for a real fault).
+- Grade on the **internet** (median across targets, **average** loss), not the LAN gateway or a p95
+  of quantized loss that stepped straight to F. Latency is **per-target** with per-target floor, so
+  a distant-but-stable host no longer reads as congestion.
+- Retention: **every** append-only table is pruned (was unbounded); composite indexes on hot paths;
+  a 7d window is honestly capped to raw retention; diurnal reads the 1-h rollups.
+- Migration table list **derived from the models** (was drifting); regional baseline follows the
+  PC's country; on-demand speedtest is lock-guarded; the meaningless cumulative `tx_retries` series
+  removed.
+- Map false precision fixed (null-island 0,0 hops dropped, centroid-stacked services deduped);
+  verdict findings ranked with error/warning prominent and info collapsed; panels have error states;
+  loss chart auto-scales; a **collector heartbeat** → `collector_healthy` drives a header status dot.
+
+**New capabilities (the 6 roadmap items):**
+- **A4 ✅ Forensic report** — `GET /api/report` self-contained printable HTML (verdict, SLA, outage
+  log, DNS comparison, geolocated route, methodology). Export button in the verdict panel.
+- **B1 ✅ Anomaly detection** — `robust_z` (was unused) now flags latency that's ≥3 SD above the
+  link's **own** 1-h-rollup history.
+- **B5 ✅ SLA contract-vs-delivered** — `[sla]` config + `analysis/sla.py` + `/api/sla` + card:
+  capacity passes at ≥90% of the headline rate, uptime/latency are hard thresholds.
+- **H3 ✅ DoT + IPv6 parity** — DNS-over-TLS health per resolver (`dig +tls`); dual-stack IPv6 ping
+  (`ping_raw.af`, `ipv6_targets`) with a "broken IPv6 / happy-eyeballs" finding.
+- **H\* ✅ UDP/QUIC media probe** — `probes/media.py` detects an active UDP call/game flow and pings
+  its real peer; the "Video calls" experience rating uses that **real path** when a call is live.
+- **C4/C5 ✅** retention pruning + collector heartbeat; **perf** — latest-flow-per-IP via SQL
+  `max(ts)` (not full-window scans); `queries.py` split (raw explorer → `api/raw_queries.py`).
+
+Also new since v0.1: block-aware WiFi channel analysis, service-geolocated route map, DNS-resolver
+comparison, per-service traffic aggregation, per-activity experience ratings, live-speed KPIs,
+Playwright e2e smoke suite.
 
 ---
 
 ## Themes & backlog
 
 Priority: **P0** = highest leverage for the actual goal (know why it fails). Effort: S/M/L.
+Items completed above are marked ✅ inline.
 
 ### A. Diagnostic & verdict engine — *"que concluya el sistema"* (P0) 🚩
 
@@ -33,7 +86,7 @@ The flagship. Turn measurements into an attributed conclusion.
   WiFi clean), `dns` (resolver failing while ping is fine), `gateway` (hop-1 down). *(L)*
 - **A3** **Verdict panel** + natural-language summary generated server-side from A1/A2:
   ranked findings with evidence (timestamps, hops, magnitudes). *(M)*
-- **A4** **Forensic report (peritaje)**: exportable self-contained HTML/PDF for the window —
+- **A4 ✅** **Forensic report (peritaje)**: exportable self-contained HTML/PDF for the window —
   verdict, evidence tables, per-hop path, annotated charts, methodology — something you send
   to the ISP. *(L)*
 
@@ -56,7 +109,7 @@ their samples mix and every conclusion is wrong when you move. This underpins A 
 
 Make the analysis defensible, not eyeballed.
 
-- **B1** Rolling **baselines + anomaly detection** per metric (EWMA + MAD/robust z-score) →
+- **B1 ✅ (anomaly)** Rolling **baselines + anomaly detection** per metric (EWMA + MAD/robust z-score) →
   "anomalously bad vs *your* normal", not fixed thresholds. Feeds A2/alerts. *(M)*
 - **B2** **Change-point detection** on RTT/loss (regime shifts: "latency stepped up at 14:05
   and stayed"). *(M)*
@@ -64,7 +117,7 @@ Make the analysis defensible, not eyeballed.
   coefficients so attribution is evidence-based. *(M)*
 - **B4** Distribution views: **CDF / histogram / p50-p95-p99** per metric; time-of-day/day-of-
   week **heatmaps** ("it fails weekday evenings"). *(M)*
-- **B5** Statistical **outage/SLA definition** (sustained p95 breach, not only 100 % loss) +
+- **B5 ✅** Statistical **outage/SLA definition** (sustained p95 breach, not only 100 % loss) +
   availability %, MTBF/MTTR. *(S)*
 - **B6** Own **latency-under-load** test (saturate + ping) so bufferbloat doesn't depend on
   Ookla, and to isolate up vs down bloat. *(M)*
@@ -77,8 +130,8 @@ Make the analysis defensible, not eyeballed.
   and gap tracking (data-quality signals). *(M)*
 - **C3** **Analytical query layer**: expose Parquet export + optional DuckDB/Polars views for
   ad-hoc analysis over history without touching the live DB. *(M)*
-- **C4** Retention/rollup tuning + compaction; VACUUM schedule; DB size dashboard. *(S)*
-- **C5** Backpressure/health: collector self-metrics (probe durations, failures) as a series. *(S)*
+- **C4 ✅** Retention/rollup tuning + compaction; VACUUM schedule; DB size dashboard. *(S)*
+- **C5 ✅ (heartbeat)** Backpressure/health: collector self-metrics (probe durations, failures) as a series. *(S)*
 
 ### D. Raw data & tables — *"ver datos crudos, como tablas"* (P0)
 
@@ -93,7 +146,7 @@ Make the analysis defensible, not eyeballed.
 - **E1** **Outage timeline** (Gantt bars, colour = attributed cause) + **WiFi channel
   congestion** bar view from scan data. *(M)*
 - **E2** Per-hop **heatmap** (hop × time, colour = loss/RTT). *(M)*
-- **E3** Light/dark toggle, responsive/mobile pass, empty/error/loading states, WCAG (keyboard,
+- **E3 ✅ (states)** Light/dark toggle, responsive/mobile pass, empty/error/loading states, WCAG (keyboard,
   contrast, state by colour+icon). *(M)*
 - **E4** Range = custom window + live "follow" mode; per-target show/hide; annotations on
   events. *(S)*
@@ -108,14 +161,14 @@ Make the analysis defensible, not eyeballed.
 - **G1** Backend: aggregation-rollup correctness, outage/roaming detection, alert lifecycle,
   anomaly/attribution units. *(M)*
 - **G2** Frontend: **Vitest** + Testing Library for chart-option builders, hooks, formatters. *(M)*
-- **G3** **Playwright** e2e smoke (dashboard renders, range switch, speedtest button). *(S)*
+- **G3 ✅** **Playwright** e2e smoke (dashboard renders, range switch, speedtest button). *(S)*
 - **G4** **GitHub Actions** CI running `make check` on push. *(S)*
 
 ### H. More probes / breadth (P2)
 
 - **H1** Per-process bandwidth (`nethogs`, root) → "which app used the network". *(M)*
 - **H2** TLS SNI sniffing (`tcpdump`) for exact app classification beyond rDNS/ASN. *(L)*
-- **H3** DoH/DoT latency, DNSSEC validation, IPv6 path parity. *(M)*
+- **H3 ✅ (DoT+IPv6)** DoH/DoT latency, DNSSEC validation, IPv6 path parity. *(M)*
 - **H4** WiFi channel utilization / airtime, beacon loss, roaming quality scoring. *(M)*
 - **H5** Gateway ARP/reachability micro-probe (sub-second WiFi-drop detection). *(S)*
 
