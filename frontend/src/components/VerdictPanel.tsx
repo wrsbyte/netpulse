@@ -65,6 +65,7 @@ function Finding({ f, prominent = false }: { f: Finding; prominent?: boolean }) 
 
 export function VerdictPanel() {
   const range = useUi((s) => s.range)
+  const network = useUi((s) => s.network)
   const { data, isLoading, isError } = useVerdict(range)
   const breakdown = data?.score.breakdown ?? {}
   const headline = isError
@@ -89,9 +90,20 @@ export function VerdictPanel() {
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className={`text-base font-semibold ${isError ? 'text-danger' : 'text-ink'}`}>
-              {headline}
-            </h2>
+            <div className="flex items-start justify-between gap-2">
+              <h2 className={`text-base font-semibold ${isError ? 'text-danger' : 'text-ink'}`}>
+                {headline}
+              </h2>
+              <a
+                href={`/api/report?range=${range}&network=${network}`}
+                target="_blank"
+                rel="noopener"
+                title="Open a printable evidence report — verdict, SLA, outages, route, methodology. Save as PDF to send your ISP."
+                className="shrink-0 rounded-lg border border-accent/50 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition hover:bg-accent/20"
+              >
+                ⬇ Export report
+              </a>
+            </div>
             {(() => {
               const findings = data?.findings ?? []
               const primary = findings.filter(
