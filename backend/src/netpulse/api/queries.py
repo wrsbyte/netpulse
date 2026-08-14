@@ -24,6 +24,8 @@ from netpulse.analysis.geo import locate_colo, locate_country
 from netpulse.analysis.segment import classify as segment_classify
 from netpulse.analysis.stats import block_bootstrap_ci, gilbert_elliott, spearman
 from netpulse.analysis.verdict import WindowStats
+from netpulse.analysis.wifi_channel import ChannelAdvice
+from netpulse.analysis.wifi_channel import analyze as analyze_channel
 from netpulse.api.schemas import (
     ActivePoint,
     AnycastOut,
@@ -62,6 +64,7 @@ from netpulse.db.models import (
     State,
     Traceroute,
     WifiRaw,
+    WifiScan,
 )
 from netpulse.external.ripe_atlas import percentile_rank
 from netpulse.quality import percentile
@@ -648,6 +651,10 @@ def gather_stats(
     ).all()
     signals = [w.signal_dbm for w in wifi if w.signal_dbm is not None]
     retries = [w.tx_retries for w in wifi if w.tx_retries is not None]
+    latest_wifi = wifi[-1] if wifi else None
+    power_save = latest_wifi.power_save if latest_wifi else None
+    channel_advice = _channel_advice(session, latest_wifi, start, network_id)
+    client_outages = _client_initiated_outages(session, outages, start, network_id)
 
     dns = session.scalars(
         select(DnsRaw).where(DnsRaw.ts >= start, *_scope(DnsRaw.network_id, network_id))
@@ -661,12 +668,9 @@ def gather_stats(
         .limit(1)
     ).first()
 
-    anycast_out = _anycast_out_of_country(session, start, network_id)
-    regional_pct, regional_user_rtt = _regional_percentile(session)
-    bgp_state = session.get(State, "bgp_updates")
-    bgp_stable_state = session.get(State, "bgp_stable")
-    bgp_updates = int(bgp_state.value) if bgp_state else None
-    bgp_stable = (bgp_stable_state.value == "1") if bgp_stable_state else None
+    anycast_out, regional_pct, regional_user_rtt, bgp_updates, bgp_stable = _outside_in(
+        session, start, network_id
+    )
     signal_avg = sum(signals) / len(signals) if signals else None
     corr = _loss_retry_corr(session, hosts, start, network_id)
     primary = next((t.host for t in get_config().targets if t.kind == "internet"), None)
@@ -698,6 +702,9 @@ def gather_stats(
         worst_target=worst_target,
         wifi_signal_avg=signal_avg,
         wifi_retries_max=max(retries) if retries else None,
+        wifi_power_save=power_save,
+        channel_advice=channel_advice,
+        outages_client_initiated=client_outages,
         dns_fail=dns_fail,
         dns_total=len(dns),
         attribution=attribution,
@@ -723,6 +730,61 @@ def _regional_percentile(session: Session) -> tuple[float | None, float | None]:
     user_rtt = float(user.value)
     values = json.loads(baseline.values_json)
     return (percentile_rank(user_rtt, values), user_rtt)
+
+
+def _freq_to_channel(freq: int | None) -> int | None:
+    if freq is None:
+        return None
+    if freq >= 5000:
+        return (freq - 5000) // 5
+    return (freq - 2407) // 5  # 2.4 GHz
+
+
+def _channel_advice(
+    session: Session, latest_wifi: WifiRaw | None, start: float, network_id: int | None
+) -> ChannelAdvice | None:
+    current = _freq_to_channel(latest_wifi.freq) if latest_wifi else None
+    # Count DISTINCT APs (BSSID) per channel over the last 30 min — robust to a single partial
+    # nmcli scan; one snapshot can miss most neighbours.
+    window = max(start, time.time() - 1800)
+    scans = session.scalars(
+        select(WifiScan).where(WifiScan.ts >= window, *_scope(WifiScan.network_id, network_id))
+    ).all()
+    if not scans:
+        return None
+    by_channel: dict[int, set[str | None]] = {}
+    for sc in scans:
+        by_channel.setdefault(sc.channel, set()).add(sc.bssid)
+    channels = [ch for ch, bssids in by_channel.items() for _ in bssids]
+    return analyze_channel(current, channels)
+
+
+def _client_initiated_outages(
+    session: Session, outages: Sequence[Event], start: float, network_id: int | None
+) -> int:
+    """How many outage windows coincide with a client-initiated (locally-generated) WiFi
+    disconnect — i.e. the laptop suspending/power-saving, not the network failing."""
+    disconnects = session.scalars(
+        select(Event).where(
+            Event.kind == "wifi_disconnect", Event.detail.like("%local%"),
+            Event.ts >= start - 30, *_scope(Event.network_id, network_id),
+        )
+    ).all()
+    dts = [d.ts for d in disconnects]
+    return sum(1 for o in outages if any(abs(o.ts - dt) <= 30 for dt in dts))
+
+
+def _outside_in(
+    session: Session, start: float, network_id: int | None
+) -> tuple[list[tuple[str, str, str]], float | None, float | None, int | None, bool | None]:
+    """The outside-in corroboration: out-of-country POPs, regional percentile, BGP stability."""
+    anycast_out = _anycast_out_of_country(session, start, network_id)
+    regional_pct, regional_user_rtt = _regional_percentile(session)
+    bgp_state = session.get(State, "bgp_updates")
+    bgp_stable_state = session.get(State, "bgp_stable")
+    bgp_updates = int(bgp_state.value) if bgp_state else None
+    bgp_stable = (bgp_stable_state.value == "1") if bgp_stable_state else None
+    return anycast_out, regional_pct, regional_user_rtt, bgp_updates, bgp_stable
 
 
 def _anycast_out_of_country(

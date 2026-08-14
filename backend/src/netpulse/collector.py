@@ -41,6 +41,7 @@ from netpulse.probes import (
     throughput,
     traceroute,
     wifi,
+    wifi_events,
     wifi_scan,
 )
 from netpulse.shell import run as shrun
@@ -68,6 +69,8 @@ class Collector:
             self._backfill_network(self._network_id)
         await self._guard(self._anycast)()  # capture the serving POP immediately (long cadence)
         await self._guard(self._regional_baseline)()  # seed the outside-in baseline at startup
+        await self._guard(self._wifi_events)()  # backfill recent disconnects immediately
+        await self._guard(self._wifi_scan)()  # a full neighbour scan for channel congestion
         log.info("starting", iface=self.iface, targets=len(self.config.targets),
                  network_id=self._network_id)
         self._schedule()
@@ -80,6 +83,7 @@ class Collector:
         add(self._guard(self._ping), "interval", seconds=iv.ping)
         add(self._guard(self._tcp_connect), "interval", seconds=iv.tcp_connect)
         add(self._guard(self._wifi), "interval", seconds=iv.wifi)
+        add(self._guard(self._wifi_events), "interval", seconds=iv.wifi_events)
         add(self._guard(self._throughput), "interval", seconds=iv.throughput)
         add(self._guard(self._dns), "interval", seconds=iv.dns)
         add(self._guard(self._flows), "interval", seconds=iv.flows)
@@ -156,6 +160,22 @@ class Collector:
         now = time.time()
         for target in self.config.targets:
             self._persist(await traceroute.sample(now, target.host))
+
+    async def _wifi_events(self) -> None:
+        now = time.time()
+        with _session() as s:
+            wm = s.get(State, "wifi_disc_watermark")
+            since_ts = float(wm.value) if wm else now - 86400  # first run: backfill 24h
+            discs = await wifi_events.since(since_ts)
+            for d in discs:
+                s.add(Event(
+                    ts=d.ts, end_ts=d.ts, kind="wifi_disconnect", severity="info",
+                    detail=f"reason={d.reason} {'local' if d.local else 'remote'}",
+                    network_id=self._network_id,
+                ))
+            newest = max((d.ts for d in discs), default=since_ts)
+            self._upsert_state(s, "wifi_disc_watermark", str(max(newest, since_ts)))
+            s.commit()
 
     async def _wifi_scan(self) -> None:
         self._persist(await wifi_scan.sample(time.time(), self.iface))

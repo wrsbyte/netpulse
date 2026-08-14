@@ -11,9 +11,11 @@ from netpulse.db.models import WifiScan
 
 
 async def sample(ts: float, _iface: str) -> list[WifiScan]:
+    # --rescan yes forces an active scan so all neighbours are seen (the cached list is often just
+    # the connected AP). At the 15-min cadence the brief off-channel scan is a negligible cost.
     res = await shell.run(
-        "nmcli", "-t", "-f", "CHAN,SIGNAL,SSID,BSSID", "dev", "wifi", "list", "--rescan", "no",
-        timeout=8,
+        "nmcli", "-t", "-f", "CHAN,SIGNAL,SSID,BSSID", "dev", "wifi", "list", "--rescan", "yes",
+        timeout=12,
     )
     if not res.ok:
         return []

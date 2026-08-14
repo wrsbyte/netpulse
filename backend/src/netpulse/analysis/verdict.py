@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from netpulse.analysis.attribute import Attribution
 from netpulse.analysis.score import HealthInputs, HealthScore, health
 from netpulse.analysis.segment import SegmentVerdict
+from netpulse.analysis.wifi_channel import ChannelAdvice
 
 _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2, "ok": 3}
 _WEAK_SIGNAL_DBM = -72.0
@@ -41,6 +42,9 @@ class WindowStats:
     worst_target: tuple[str, float] | None = None  # (host, loss%)
     wifi_signal_avg: float | None = None
     wifi_retries_max: int | None = None
+    wifi_power_save: bool | None = None
+    channel_advice: ChannelAdvice | None = None
+    outages_client_initiated: int = 0  # of outage_count, how many were the laptop disconnecting
     dns_fail: int = 0
     dns_total: int = 0
     attribution: Attribution | None = None
@@ -92,15 +96,27 @@ def conclude(stats: WindowStats) -> Verdict:
             f"{a.reason} (confidence: {a.confidence}).",
         ))
 
-    if stats.outage_count:
+    if stats.outage_count and stats.outages_client_initiated >= stats.outage_count:
+        findings.append(Finding(
+            "info",
+            "Brief WiFi drops were your laptop, not the network",
+            f"{stats.outages_client_initiated} disconnect(s) were client-initiated "
+            "(suspend / lid-close / power-save), not a network outage.",
+        ))
+    elif stats.outage_count:
         cause = _attribute_outage(stats)
         pct = 100 - stats.availability if stats.availability is not None else None
         pct_txt = f"{pct:.1f}% of the window" if pct is not None else "part of the window"
+        client_txt = (
+            f" ({stats.outages_client_initiated} were your laptop suspending, not the network)"
+            if stats.outages_client_initiated
+            else ""
+        )
         findings.append(Finding(
             "error",
             f"Internet unreachable {pct_txt}",
             f"{stats.outage_count} outage(s), {stats.downtime_s / 60:.1f} min total; "
-            f"worst {(stats.worst_outage_s or 0) / 60:.1f} min. Attributed to {cause}.",
+            f"worst {(stats.worst_outage_s or 0) / 60:.1f} min. Attributed to {cause}{client_txt}.",
         ))
 
     if stats.latency is not None and stats.latency >= 100:
@@ -138,6 +154,23 @@ def conclude(stats: WindowStats) -> Verdict:
             "Weak WiFi signal",
             f"Average {stats.wifi_signal_avg:.0f} dBm (≤ {_WEAK_SIGNAL_DBM:.0f} is weak); "
             "move closer or change channel.",
+        ))
+
+    if stats.wifi_power_save:
+        findings.append(Finding(
+            "warning",
+            "WiFi power-save is on",
+            "the adapter's power-saving causes beacon loss and brief drops; disable it "
+            "(NetworkManager wifi.powersave = 2).",
+        ))
+
+    ca = stats.channel_advice
+    if ca and ca.crowded and ca.best_alternative is not None:
+        findings.append(Finding(
+            "warning",
+            f"WiFi channel {ca.current} is crowded",
+            f"{ca.aps_on_current} APs share your 5 GHz channel; switch the router to channel "
+            f"{ca.best_alternative} ({ca.alternative_aps} APs, no DFS).",
         ))
 
     findings.extend(_route_context_findings(stats))

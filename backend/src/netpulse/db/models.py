@@ -68,6 +68,7 @@ class WifiRaw(NetworkScoped, Base):
     tx_packets: Mapped[int | None] = mapped_column(Integer)  # cumulative; for retry-rate ratios
     tx_retries: Mapped[int | None] = mapped_column(Integer)
     tx_failed: Mapped[int | None] = mapped_column(Integer)
+    power_save: Mapped[bool | None] = mapped_column(Boolean)  # on = a common cause of drops
 
 
 class ThroughputRaw(NetworkScoped, Base):

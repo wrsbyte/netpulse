@@ -24,6 +24,7 @@ def _columns(conn: object, table: str) -> set[str]:
 _ADDED_COLUMNS: tuple[tuple[str, str, str, bool], ...] = (
     *((t, "network_id", "INTEGER", True) for t in _NETWORK_SCOPED_TABLES),
     ("wifi_raw", "tx_packets", "INTEGER", False),
+    ("wifi_raw", "power_save", "BOOLEAN", False),
 )
 
 

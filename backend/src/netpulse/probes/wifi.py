@@ -40,6 +40,8 @@ async def sample(ts: float, iface: str) -> WifiRaw | None:
         return None
     station = await shell.run("iw", "dev", iface, "station", "dump", timeout=4)
     survey = await shell.run("iw", "dev", iface, "survey", "dump", timeout=4)
+    power = await shell.run("iw", "dev", iface, "get", "power_save", timeout=4)
+    power_save = "Power save: on" in power.stdout if power.ok else None
 
     ssid_m = _SSID.search(link.stdout)
     bssid_m = _BSSID.search(link.stdout)
@@ -55,4 +57,5 @@ async def sample(ts: float, iface: str) -> WifiRaw | None:
         tx_packets=_i(_TX_PACKETS, station.stdout),
         tx_retries=_i(_TX_RETRIES, station.stdout),
         tx_failed=_i(_TX_FAILED, station.stdout),
+        power_save=power_save,
     )

@@ -49,6 +49,7 @@ class Intervals(BaseModel):
     ping: int = 3
     tcp_connect: int = 15
     wifi: int = 5
+    wifi_events: int = 60
     network: int = 15
     throughput: int = 3
     dns: int = 20
