@@ -93,6 +93,15 @@ export const useFlowQuality = (range: Range) => {
   })
 }
 
+export const useGeo = () => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['geo', network],
+    queryFn: () => api.geo(network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
 export const useDiurnal = (metric: string, range: Range) => {
   const network = useNetwork()
   return useQuery({

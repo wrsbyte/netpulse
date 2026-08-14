@@ -5,6 +5,7 @@ import type {
   EventOut,
   FlowOut,
   FlowQuality,
+  GeoResponse,
   HopTimeline,
   NetworkInfo,
   Range,
@@ -50,6 +51,7 @@ export const api = {
   hops: (range: Range, network: string) =>
     get<HopTimeline>(`/traceroute/hops?${q(range, network)}`),
   anycast: (network: string) => get<AnycastInfo[]>(`/anycast?network=${network}`),
+  geo: (network: string) => get<GeoResponse>(`/geo?network=${network}`),
   flowQuality: (range: Range, network: string) =>
     get<FlowQuality[]>(`/flow-quality?${q(range, network)}`),
   diurnal: (metric: string, range: Range, network: string) =>

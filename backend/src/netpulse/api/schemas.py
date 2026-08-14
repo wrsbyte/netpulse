@@ -162,6 +162,27 @@ class DiurnalResponse(BaseModel):
     cells: list[DiurnalCell]
 
 
+class GeoPoint(BaseModel):
+    lat: float
+    lon: float
+    label: str
+    kind: str  # "you" | "pop"
+    out_of_country: bool
+
+
+class GeoArc(BaseModel):
+    from_lat: float
+    from_lon: float
+    to_lat: float
+    to_lon: float
+    out_of_country: bool
+
+
+class GeoResponse(BaseModel):
+    points: list[GeoPoint]
+    arcs: list[GeoArc]
+
+
 class Status(BaseModel):
     online: bool
     current_rtt: float | None

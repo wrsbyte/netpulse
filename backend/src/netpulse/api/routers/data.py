@@ -25,6 +25,7 @@ from netpulse.api.schemas import (
     FindingOut,
     FlowOut,
     FlowQualityOut,
+    GeoResponse,
     HopTimeline,
     NetworkOut,
     ScoreOut,
@@ -101,6 +102,11 @@ def get_status(
 @router.get("/networks", response_model=list[NetworkOut])
 def get_networks(session: Db) -> list[NetworkOut]:
     return queries.networks(session)
+
+
+@router.get("/geo", response_model=GeoResponse)
+def get_geo(session: Db, network: Annotated[str, Query()] = "current") -> GeoResponse:
+    return queries.geo_map(session, resolve_network(session, network))
 
 
 @router.get("/anycast", response_model=list[AnycastOut])

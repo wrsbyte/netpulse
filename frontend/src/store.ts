@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Range } from './lib/types'
 
-export type Tab = 'dashboard' | 'routes' | 'path' | 'data'
+export type Tab = 'dashboard' | 'routes' | 'map' | 'path' | 'data'
 
 interface UiState {
   range: Range

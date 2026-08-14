@@ -166,6 +166,27 @@ export interface DiurnalResponse {
   cells: DiurnalCell[]
 }
 
+export interface GeoPoint {
+  lat: number
+  lon: number
+  label: string
+  kind: 'you' | 'pop'
+  out_of_country: boolean
+}
+
+export interface GeoArc {
+  from_lat: number
+  from_lon: number
+  to_lat: number
+  to_lon: number
+  out_of_country: boolean
+}
+
+export interface GeoResponse {
+  points: GeoPoint[]
+  arcs: GeoArc[]
+}
+
 export interface Status {
   online: boolean
   current_rtt: number | null

@@ -20,6 +20,7 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 from netpulse.aggregation import SOURCES
 from netpulse.analysis.attribute import HopStat, attribute
 from netpulse.analysis.diurnal import distinct_days, hourly_cells
+from netpulse.analysis.geo import locate_colo, locate_country
 from netpulse.analysis.segment import classify as segment_classify
 from netpulse.analysis.stats import block_bootstrap_ci, gilbert_elliott, spearman
 from netpulse.analysis.verdict import WindowStats
@@ -31,6 +32,9 @@ from netpulse.api.schemas import (
     EventOut,
     FlowOut,
     FlowQualityOut,
+    GeoArc,
+    GeoPoint,
+    GeoResponse,
     HopPoint,
     HopSeries,
     HopTimeline,
@@ -191,6 +195,33 @@ def networks(session: Session) -> list[NetworkOut]:
         )
         for n in rows
     ]
+
+
+def geo_map(session: Session, network_id: int | None) -> GeoResponse:
+    """You + the CDN POPs serving you, coarsely geolocated, with arcs — the route picture."""
+    pops = latest_anycast(session, network_id)
+    client_cc = next((p.client_country for p in pops if p.client_country), None)
+    you = locate_country(client_cc)
+    points: list[GeoPoint] = []
+    arcs: list[GeoArc] = []
+    if you:
+        points.append(GeoPoint(
+            lat=you[0], lon=you[1], label=f"You ({client_cc})", kind="you", out_of_country=False,
+        ))
+    for p in pops:
+        loc = locate_colo(p.colo)
+        if loc is None:
+            continue
+        label = f"{p.provider.title()} {p.colo} ({p.colo_country})"
+        points.append(GeoPoint(
+            lat=loc[0], lon=loc[1], label=label, kind="pop", out_of_country=p.out_of_country,
+        ))
+        if you:
+            arcs.append(GeoArc(
+                from_lat=you[0], from_lon=you[1], to_lat=loc[0], to_lon=loc[1],
+                out_of_country=p.out_of_country,
+            ))
+    return GeoResponse(points=points, arcs=arcs)
 
 
 def latest_anycast(session: Session, network_id: int | None) -> list[AnycastOut]:

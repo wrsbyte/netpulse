@@ -3,6 +3,7 @@ import { useUi, type Tab } from '../store'
 const TABS: { key: Tab; label: string }[] = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'routes', label: 'Routes' },
+  { key: 'map', label: 'Map' },
   { key: 'path', label: 'Path' },
   { key: 'data', label: 'Raw data' },
 ]

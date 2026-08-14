@@ -6,7 +6,7 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Single-page localhost app served locally — code-splitting buys nothing here.
-  build: { outDir: 'dist', chunkSizeWarningLimit: 900 },
+  build: { outDir: 'dist', chunkSizeWarningLimit: 1500 },
   server: {
     port: 5173,
     proxy: { '/api': 'http://127.0.0.1:8477' },
