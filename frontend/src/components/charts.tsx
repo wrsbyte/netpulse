@@ -70,14 +70,14 @@ export function WifiChart() {
         axisLabel: { formatter: '{value}' },
         splitLine: { lineStyle: { color: '#1a2432' } },
       },
-      { type: 'value', position: 'right', splitLine: { show: false } },
+      { type: 'value', name: 'Mbps', position: 'right', splitLine: { show: false } },
     ],
     series: [
       {
         name: 'signal (dBm)',
         type: 'line',
         showSymbol: false,
-        smooth: true,
+        smooth: false,
         data: sig.map((p) => [p.ts * 1000, p.avg]),
         lineStyle: { color: '#38bdf8', width: 1.5 },
         itemStyle: { color: '#38bdf8' },
@@ -87,7 +87,7 @@ export function WifiChart() {
         type: 'line',
         yAxisIndex: 1,
         showSymbol: false,
-        smooth: true,
+        smooth: false,
         data: rate.map((p) => [p.ts * 1000, p.avg]),
         lineStyle: { color: '#34d399', width: 1.5 },
         itemStyle: { color: '#34d399' },
@@ -113,7 +113,7 @@ export function ThroughputChart() {
     pts.map((p) => [p.ts * 1000, p.avg == null ? null : p.avg / 1e6])
   const option: EChartsOption = {
     legend: { ...baseOption.legend, data: ['download', 'upload'] },
-    yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} Mb/s' } },
+    yAxis: { ...baseOption.yAxis, axisLabel: { formatter: '{value} Mbps' } },
     series: [
       {
         name: 'download',
@@ -138,7 +138,7 @@ export function ThroughputChart() {
   return (
     <Panel
       title="Interface throughput"
-      subtitle="Live data rate on the WiFi uplink, in megabits/second (Mb/s) · download vs upload"
+      subtitle="Live data rate on the WiFi uplink, in megabits/second (Mbps) · download vs upload"
     >
       <Chart option={option} loading={rx.isLoading} height={200} />
     </Panel>
@@ -177,7 +177,7 @@ export function ActiveChart() {
     legend: { ...baseOption.legend, data: ['download', 'upload', 'bufferbloat (ms)'] },
     yAxis: [
       { type: 'value', name: 'Mbps', splitLine: { lineStyle: { color: '#1a2432' } } },
-      { type: 'value', position: 'right', splitLine: { show: false } },
+      { type: 'value', name: 'ms', position: 'right', splitLine: { show: false } },
     ],
     series: [
       {

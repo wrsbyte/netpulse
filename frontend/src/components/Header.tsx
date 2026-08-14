@@ -8,7 +8,6 @@ export function Header() {
   const speedtest = useSpeedtest()
   const result = speedtest.data
   const range = useUi((s) => s.range)
-  const network = useUi((s) => s.network)
   const { data: status, isError } = useStatus(range)
   const healthy = !isError && status?.collector_healthy
   return (
@@ -44,15 +43,6 @@ export function Header() {
             </span>
           )}
         </div>
-        <a
-          href={`/api/report?range=${range}&network=${network}`}
-          target="_blank"
-          rel="noopener"
-          title="Open a printable evidence report (verdict, SLA, outages, route) — save as PDF"
-          className="rounded-lg border border-border bg-panel-2 px-3 py-1 text-sm text-ink transition hover:border-accent"
-        >
-          Export report
-        </a>
         <RangeSelector />
       </div>
     </header>

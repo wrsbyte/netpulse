@@ -5,6 +5,7 @@ import { MapTab } from './components/MapTab'
 import { PathView } from './components/PathView'
 import { RoutesTab } from './components/RoutesTab'
 import { SlaPanel } from './components/SlaPanel'
+import { StaleBanner } from './components/StaleBanner'
 import { StatusBar } from './components/StatusBar'
 import { Tabs } from './components/Tabs'
 import { VerdictPanel } from './components/VerdictPanel'
@@ -46,6 +47,7 @@ export default function App() {
   return (
     <div className="mx-auto max-w-7xl space-y-4 p-4 lg:p-6">
       <Header />
+      <StaleBanner />
       <VerdictPanel />
       <Tabs />
       {tab === 'dashboard' && <Dashboard />}

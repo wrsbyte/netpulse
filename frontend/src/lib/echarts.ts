@@ -108,7 +108,8 @@ export function lineSeries(series: Series[], withBand = false): SeriesOption[] {
       type: 'line',
       data: toPairs(s.points),
       showSymbol: false,
-      smooth: true,
+      // never smooth: a monitoring chart's job is to show spikes, not round them away.
+      smooth: false,
       connectNulls: false,
       lineStyle: { color, width: 1.5 },
       itemStyle: { color },
