@@ -14,7 +14,8 @@ def test_status_uses_fresh_raw_before_any_rollup(tmp_path: Path) -> None:
     with get_session() as s:
         s.add_all([
             PingRaw(ts=now - 5, target="1.1.1.1", loss_pct=0.0, rtt_avg=12.0),
-            PingRaw(ts=now - 5, target="8.8.8.8", loss_pct=0.0, rtt_avg=20.0),
+            PingRaw(ts=now - 5, target="8.8.8.8", loss_pct=0.0, rtt_avg=16.0),
+            PingRaw(ts=now - 5, target="9.9.9.9", loss_pct=0.0, rtt_avg=20.0),
             PingRaw(ts=now - 5, target="192.168.100.1", loss_pct=0.0, rtt_avg=2.0),
         ])
         s.commit()
@@ -23,7 +24,8 @@ def test_status_uses_fresh_raw_before_any_rollup(tmp_path: Path) -> None:
         status = queries.status(s, window=6 * 3600, interface="wlan0")
 
     assert status.online is True
-    assert status.current_rtt == 2.0  # best (lowest) reachable RTT
+    # representative INTERNET latency (median of 12/16/20), NOT the ~2 ms LAN gateway
+    assert status.current_rtt == 16.0
     assert status.current_loss == 0.0
 
 

@@ -542,13 +542,21 @@ def experience(session: Session, window: int, network_id: int | None) -> Experie
         )
     ).all()
     pings = _drop_measurement_artifacts(session, pings, start, network_id)
-    rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
     jitters = [p.jitter for p in pings if p.jitter is not None]
     per_target: dict[str, list[float]] = {}
+    per_target_rtt: dict[str, list[float]] = {}
     for p in pings:
         per_target.setdefault(p.target, []).append(p.loss_pct)
+        if p.rtt_avg is not None:
+            per_target_rtt.setdefault(p.target, []).append(p.rtt_avg)
     typical_loss = (
         percentile([sum(v) / len(v) for v in per_target.values()], 50) if per_target else None
+    )
+    # representative internet RTT: median across targets (not pooled — audit H1)
+    rtt_repr = (
+        percentile([percentile(v, 50) for v in per_target_rtt.values()], 50)
+        if per_target_rtt
+        else None
     )
     active = session.scalars(
         select(ActiveTest)
@@ -565,7 +573,7 @@ def experience(session: Session, window: int, network_id: int | None) -> Experie
     dns_ms = percentile([d.query_ms for d in dns if d.query_ms is not None], 50) if dns else None
 
     inputs = ExperienceInputs(
-        rtt_ms=percentile(rtts, 50) if rtts else None,
+        rtt_ms=rtt_repr,
         loss_pct=typical_loss,
         jitter_ms=percentile(jitters, 95) if jitters else None,
         bufferbloat_ms=active.bufferbloat_ms if active else None,
@@ -616,9 +624,14 @@ def status(session: Session, window: int, interface: str, network_id: int | None
     recent = session.scalars(
         select(PingRaw).where(PingRaw.ts >= now - 60, *_scope(PingRaw.network_id, network_id))
     ).all()
-    reachable = [r for r in recent if r.loss_pct < 100 and r.rtt_avg is not None]
-    latest_ping = min(reachable, key=lambda r: r.rtt_avg) if reachable else None  # type: ignore[arg-type,return-value]
-    current_loss = min((r.loss_pct for r in recent), default=None)
+    # "to the internet" must mean the internet, not the ~1 ms LAN gateway; and a representative
+    # (median) value, not the single most-optimistic target.
+    internet_hosts = _internet_hosts()
+    internet = [r for r in recent if r.target in internet_hosts]
+    reachable = [r for r in internet if r.loss_pct < 100 and r.rtt_avg is not None]
+    net_rtts = [r.rtt_avg for r in reachable if r.rtt_avg is not None]
+    current_rtt = percentile(net_rtts, 50) if net_rtts else None
+    current_loss = percentile([r.loss_pct for r in internet], 50) if internet else None
 
     latest_wifi = session.scalars(
         select(WifiRaw)
@@ -648,7 +661,7 @@ def status(session: Session, window: int, interface: str, network_id: int | None
 
     return Status(
         online=bool(reachable),
-        current_rtt=latest_ping.rtt_avg if latest_ping else None,
+        current_rtt=current_rtt,
         current_loss=current_loss,
         wifi_signal_dbm=latest_wifi.signal_dbm if latest_wifi else None,
         wifi_bitrate=latest_wifi.tx_bitrate if latest_wifi else None,
@@ -924,22 +937,14 @@ def gather_stats(
         )
     ).all()
     pings = _drop_measurement_artifacts(session, pings, start, network_id)
-    rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
     jitters = [p.jitter for p in pings if p.jitter is not None]
 
     per_target: dict[str, list[float]] = {}
     for p in pings:
         per_target.setdefault(p.target, []).append(p.loss_pct)
-    worst_target, typical_loss, typical_loss_p95, loss_ci, loss_burst = _loss_stats(per_target)
+    worst_target, typical_loss, loss_ci, loss_burst = _loss_stats(per_target)
 
-    # Empirical latency floor: the fastest RTT ever seen on this path is its physical minimum;
-    # excess above it is congestion/queuing, not distance (the audit's min-RTT baseline).
-    rtt_mins = [p.rtt_min for p in pings if p.rtt_min is not None]
-    floor = min(rtt_mins) if rtt_mins else None
-    latency_p95 = percentile(rtts, 95) if rtts else None
-    latency_excess = (
-        max(0.0, latency_p95 - floor) if latency_p95 is not None and floor is not None else None
-    )
+    latency_p95, latency_excess = _latency_stats(pings)
 
     outages = session.scalars(
         select(Event).where(
@@ -1002,7 +1007,7 @@ def gather_stats(
     segment = segment_classify(min(medians), max(medians)) if medians else None
 
     return WindowStats(
-        loss=typical_loss_p95,
+        loss=typical_loss,
         typical_loss=typical_loss,
         loss_ci=loss_ci,
         loss_burst_len=loss_burst,
@@ -1063,24 +1068,45 @@ def _drop_measurement_artifacts(
     return [p for p in pings if int(p.ts) not in blocked]
 
 
+def _latency_stats(pings: Sequence[PingRaw]) -> tuple[float | None, float | None]:
+    """Representative internet latency: per-target p95 RTT and per-target excess over THAT target's
+    own floor, aggregated by median across targets. Pooling all targets would let a distant-but-
+    healthy host's tail (and the nearest host's floor) masquerade as congestion (audit H1)."""
+    by_rtt: dict[str, list[float]] = {}
+    by_floor: dict[str, list[float]] = {}
+    for p in pings:
+        if p.rtt_avg is not None:
+            by_rtt.setdefault(p.target, []).append(p.rtt_avg)
+        if p.rtt_min is not None:
+            by_floor.setdefault(p.target, []).append(p.rtt_min)
+    if not by_rtt:
+        return (None, None)
+    latency_p95 = percentile([percentile(v, 95) for v in by_rtt.values()], 50)
+    excesses = [
+        max(0.0, percentile(rtts, 95) - min(by_floor[t]))
+        for t, rtts in by_rtt.items()
+        if by_floor.get(t)
+    ]
+    latency_excess = percentile(excesses, 50) if excesses else None
+    return (latency_p95, latency_excess)
+
+
 def _loss_stats(
     per_target: dict[str, list[float]],
-) -> tuple[
-    tuple[str, float] | None, float | None, float | None, tuple[float, float] | None, float | None
-]:
+) -> tuple[tuple[str, float] | None, float | None, tuple[float, float] | None, float | None]:
     """From per-target loss samples: the worst target (host, avg%), the TYPICAL destination's
-    average and p95 loss (median across targets — so one badly-peered CDN can't define the grade),
-    the block-bootstrap CI on the worst path, and its mean loss-burst length."""
+    AVERAGE loss (median across targets — so one badly-peered CDN can't define the grade, and the
+    convex score curve is fed the mean it's calibrated for, not a p95 of quantized per-cycle loss
+    that steps straight to F), the block-bootstrap CI on the worst path, and its burst length."""
     if not per_target:
-        return (None, None, None, None, None)
+        return (None, None, None, None)
     host, vals = max(per_target.items(), key=lambda kv: sum(kv[1]) / len(kv[1]))
     worst_target = (host, sum(vals) / len(vals))
     avg_by_target = {h: sum(v) / len(v) for h, v in per_target.items()}
     typical_loss = percentile(list(avg_by_target.values()), 50)
-    typical_loss_p95 = percentile([percentile(v, 95) for v in per_target.values()], 50)
     loss_ci = block_bootstrap_ci(vals) if len(vals) > 10 else None
     _, loss_burst = gilbert_elliott([v > 0 for v in vals])
-    return (worst_target, typical_loss, typical_loss_p95, loss_ci, loss_burst)
+    return (worst_target, typical_loss, loss_ci, loss_burst)
 
 
 def _representative_target(targets: list[Target], per_target: dict[str, list[float]]) -> str | None:
