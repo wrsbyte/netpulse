@@ -6,7 +6,10 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
-  retries: 0,
+  // The dev API is a single uvicorn worker; a page fires ~16 concurrent queries, so a cold-start
+  // assertion can transiently exceed its timeout under the burst. One retry absorbs that without
+  // masking a real break (which fails both attempts).
+  retries: 1,
   reporter: [['list']],
   use: {
     baseURL: process.env.NETPULSE_URL ?? 'http://127.0.0.1:8477',

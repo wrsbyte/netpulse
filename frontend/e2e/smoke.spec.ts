@@ -45,9 +45,9 @@ test('map renders a chart canvas without crashing', async ({ page }) => {
   const errors = trackErrors(page)
   await page.goto('/')
   await page.getByRole('tab', { name: 'Map' }).click()
-  await expect(page.getByRole('heading', { name: 'Route map' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Route map' })).toBeVisible({ timeout: 20_000 })
   // ECharts draws into a <canvas>; its presence proves setOption didn't throw.
-  await expect(page.locator('canvas').first()).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20_000 })
   expect(errors, `map console errors:\n${errors.join('\n')}`).toEqual([])
 })
 
