@@ -106,3 +106,22 @@ made the tool actively misreport (all now fixed):
   exclusion window was right-sized (+25 s, recovers by ~17 s). Deferred (low): the availability/loss
   double-weight in the composite score, and two latent stats helpers (`effective_n` unused,
   `block_bootstrap_ci` returns range for small n) — both currently inert.
+
+### Round 2c — UX re-audit fixes
+
+The UX re-auditor's actionable findings were applied:
+- **Report is now evidence-grade** (P2/P3): a Connection block (public IPv4/IPv6, contracted plan),
+  an executive Summary and a Requested-action line, all numbers rounded, headline grammar fixed and
+  the duplicate "Grade" removed, and the SLA section states its window split.
+- **Collector-offline is unmissable** (P4): a full-width alert banner + the Status KPI shows "Stale"
+  instead of a green "Online" when the heartbeat is gone.
+- **Charts stopped smoothing** (P6): latency/loss/wifi/dns lines no longer round spikes away; right
+  axes are named; units standardized to "Mbps".
+- **Error states unified** (P5): every chart + the SLA panel show a "cannot reach the collector"
+  message instead of empty axes / vanishing.
+- **Non-colour encodings** (P8): DNS fail% and retrans carry a ▲ marker in the bad state.
+- **Export de-duplicated** (P9): one prominent button in the verdict (header link removed).
+
+Deferred (design evolution, not defects): P1 reconcile the summary bands into a single time-scoped
+hero; P11 lift the 10–11px type floor to 12px + tier the Routes jargon; P12 centralize the
+colour/threshold tokens; F9 further split `queries.py`. Tracked in ROADMAP.
