@@ -59,6 +59,7 @@ from netpulse.api.schemas import (
     RawPage,
     Series,
     SeriesResponse,
+    ServiceQualityOut,
     Status,
 )
 from netpulse.config import Target, get_config
@@ -360,6 +361,69 @@ def recent_flow_quality(
         for r in latest.values()
     ]
     out.sort(key=lambda f: f.excess_ms or 0, reverse=True)
+    return out[:limit]
+
+
+# Keyed by the numeric ASN as stored (no "AS" prefix), to name the common orgs the flow classifier
+# doesn't label — otherwise they show as a bare number.
+_ASN_ORG = {
+    "8075": "Microsoft",
+    "13335": "Cloudflare",
+    "16509": "Amazon AWS",
+    "14618": "Amazon AWS",
+    "15169": "Google",
+    "396982": "Google Cloud",
+    "396356": "Google",
+    "32934": "Meta",
+    "20940": "Akamai",
+    "36459": "GitHub",
+    "13999": "Mega Cable (ISP)",
+    "54113": "Fastly",
+    "399358": "Datacamp/CDN77",
+    "20454": "SHF",
+}
+
+
+def flow_services(
+    session: Session, window: int, network_id: int | None, limit: int = 12
+) -> list[ServiceQualityOut]:
+    """Passive transport quality collapsed by SERVICE (app name, else ASN org) instead of a wall of
+    raw endpoint IPs — how each service you actually use is performing, most-used first."""
+    start = time.time() - window
+    rows = session.scalars(
+        select(FlowQuality)
+        .where(FlowQuality.ts >= start, *_scope(FlowQuality.network_id, network_id))
+        .order_by(FlowQuality.ts.desc())
+    ).all()
+    latest: dict[str, FlowQuality] = {}
+    for r in rows:
+        latest.setdefault(r.remote_ip, r)  # most-recent sample per endpoint
+
+    groups: dict[str, list[FlowQuality]] = {}
+    for r in latest.values():
+        asn = (r.asn or "").removeprefix("AS")
+        key = r.app or _ASN_ORG.get(asn, "") or (f"AS{asn}" if asn else "Unknown")
+        groups.setdefault(key, []).append(r)
+
+    out: list[ServiceQualityOut] = []
+    for service, flows in groups.items():
+        base = [f.min_rtt_ms for f in flows if f.min_rtt_ms is not None]
+        excesses = [
+            max(0.0, f.srtt_ms - f.min_rtt_ms)
+            for f in flows
+            if f.srtt_ms is not None and f.min_rtt_ms is not None
+        ]
+        goodputs = [f.delivery_mbps for f in flows if f.delivery_mbps is not None]
+        out.append(ServiceQualityOut(
+            service=service,
+            asn=next((f.asn for f in flows if f.asn), None),
+            endpoints=len(flows),
+            rtt_ms=round(percentile(base, 50), 1) if base else None,
+            worst_excess_ms=round(max(excesses), 1) if excesses else None,
+            retrans_total=sum(f.retrans_total or 0 for f in flows),
+            delivery_mbps=round(sum(goodputs), 2) if goodputs else None,
+        ))
+    out.sort(key=lambda s: s.delivery_mbps or 0, reverse=True)
     return out[:limit]
 
 

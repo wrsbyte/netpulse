@@ -32,6 +32,7 @@ from netpulse.api.schemas import (
     NetworkOut,
     ScoreOut,
     SeriesResponse,
+    ServiceQualityOut,
     Status,
     VerdictOut,
 )
@@ -158,6 +159,16 @@ def get_flow_quality(
 ) -> list[FlowQualityOut]:
     _, window = window_for(range)
     return queries.recent_flow_quality(session, window, resolve_network(session, network))
+
+
+@router.get("/flow-services", response_model=list[ServiceQualityOut])
+def get_flow_services(
+    session: Db,
+    range: Annotated[str, Query()] = "6h",
+    network: Annotated[str, Query()] = "current",
+) -> list[ServiceQualityOut]:
+    _, window = window_for(range)
+    return queries.flow_services(session, window, resolve_network(session, network))
 
 
 @router.get("/traceroute/hops", response_model=HopTimeline)

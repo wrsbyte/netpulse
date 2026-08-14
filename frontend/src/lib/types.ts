@@ -151,6 +151,16 @@ export interface FlowQuality {
   sockets: number
 }
 
+export interface ServiceQuality {
+  service: string
+  asn: string | null
+  endpoints: number
+  rtt_ms: number | null
+  worst_excess_ms: number | null
+  retrans_total: number
+  delivery_mbps: number | null
+}
+
 export interface DiurnalCell {
   hour: number
   mean: number

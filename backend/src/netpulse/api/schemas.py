@@ -202,6 +202,16 @@ class GeoResponse(BaseModel):
     path_target: str | None = None
 
 
+class ServiceQualityOut(BaseModel):
+    service: str  # app name, ASN org, or raw ASN
+    asn: str | None
+    endpoints: int  # distinct remote IPs collapsed into this service
+    rtt_ms: float | None  # representative base RTT
+    worst_excess_ms: float | None  # worst queuing/congestion across its endpoints
+    retrans_total: int
+    delivery_mbps: float | None  # summed goodput
+
+
 class MetricOut(BaseModel):
     label: str
     value: float | None

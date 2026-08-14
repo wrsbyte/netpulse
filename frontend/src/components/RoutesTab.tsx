@@ -1,4 +1,4 @@
-import { useAnycast, useFlowQuality } from '../hooks'
+import { useAnycast, useFlowServices } from '../hooks'
 import { useUi } from '../store'
 import { fmt } from '../lib/format'
 import { DiurnalPanel } from './DiurnalPanel'
@@ -54,34 +54,31 @@ function AnycastPanel() {
 
 function FlowQualityPanel() {
   const range = useUi((s) => s.range)
-  const { data } = useFlowQuality(range)
-  const flows = data ?? []
+  const { data } = useFlowServices(range)
+  const services = data ?? []
   return (
     <Panel
-      title="Live transport quality (passive)"
-      subtitle="Per-endpoint RTT/loss/goodput the kernel measures on your real traffic (ss -ti). Excess = current − base RTT = queuing/congestion right now; lower is better."
+      title="Who you talk to & how it performs"
+      subtitle="Your real traffic (ss -ti) grouped by service, most-used first. Excess = extra RTT over the path's floor = queuing/congestion; lower is better. Endpoints = how many IPs collapsed into that service."
     >
-      {flows.length === 0 ? (
+      {services.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted">No active flows sampled yet.</p>
       ) : (
-        <div className="max-h-[28rem] overflow-auto">
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="sticky top-0 bg-panel text-left text-[11px] uppercase tracking-wide text-muted">
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <th scope="col" className="pb-1 pr-3 font-medium">
-                  App / endpoint
-                </th>
-                <th scope="col" className="pb-1 pr-3 font-medium">
-                  ASN
+                  Service
                 </th>
                 <th scope="col" className="pb-1 pr-3 text-right font-medium">
-                  Base RTT (ms)
+                  Endpoints
                 </th>
                 <th scope="col" className="pb-1 pr-3 text-right font-medium">
-                  Now (ms)
+                  Base RTT
                 </th>
                 <th scope="col" className="pb-1 pr-3 text-right font-medium">
-                  Excess (ms)
+                  Worst excess
                 </th>
                 <th scope="col" className="pb-1 pr-3 text-right font-medium">
                   Retrans
@@ -92,30 +89,29 @@ function FlowQualityPanel() {
               </tr>
             </thead>
             <tbody>
-              {flows.map((f) => (
-                <tr key={f.remote_ip} className="border-b border-border/40 last:border-0">
-                  <td className="py-1 pr-3 text-ink">{f.app ?? f.remote_ip}</td>
-                  <td className="py-1 pr-3 text-muted tabular-nums">
-                    {f.asn ? `AS${f.asn}` : '—'}
+              {services.map((s) => (
+                <tr key={s.service} className="border-b border-border/40 last:border-0">
+                  <td className="py-1.5 pr-3 text-ink">
+                    {s.service} {s.asn && <span className="text-[11px] text-muted">AS{s.asn}</span>}
                   </td>
-                  <td className="py-1 pr-3 text-right tabular-nums text-muted">
-                    {fmt.msFine(f.min_rtt_ms)}
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-muted">{s.endpoints}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-muted">
+                    {fmt.msFine(s.rtt_ms)}
                   </td>
-                  <td className="py-1 pr-3 text-right tabular-nums text-ink">
-                    {fmt.msFine(f.srtt_ms)}
-                  </td>
-                  <td className="py-1 pr-3 text-right">
-                    <Badge tone={excessTone(f.excess_ms)}>{fmt.msFine(f.excess_ms)}</Badge>
+                  <td className="py-1.5 pr-3 text-right">
+                    <Badge tone={excessTone(s.worst_excess_ms)}>
+                      {fmt.msFine(s.worst_excess_ms)}
+                    </Badge>
                   </td>
                   <td
-                    className={`py-1 pr-3 text-right tabular-nums ${
-                      f.retrans_total ? 'text-warn' : 'text-muted'
+                    className={`py-1.5 pr-3 text-right tabular-nums ${
+                      s.retrans_total ? 'text-warn' : 'text-muted'
                     }`}
                   >
-                    {f.retrans_total ?? 0}
+                    {s.retrans_total}
                   </td>
-                  <td className="py-1 text-right tabular-nums text-muted">
-                    {fmt.mbps(f.delivery_mbps)}
+                  <td className="py-1.5 text-right tabular-nums text-muted">
+                    {fmt.mbps(s.delivery_mbps)}
                   </td>
                 </tr>
               ))}

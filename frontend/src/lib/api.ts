@@ -14,6 +14,7 @@ import type {
   RawPage,
   RawQuery,
   SeriesResponse,
+  ServiceQuality,
   Status,
   Verdict,
 } from './types'
@@ -56,6 +57,8 @@ export const api = {
   geo: (network: string) => get<GeoResponse>(`/geo?network=${network}`),
   flowQuality: (range: Range, network: string) =>
     get<FlowQuality[]>(`/flow-quality?${q(range, network)}`),
+  flowServices: (range: Range, network: string) =>
+    get<ServiceQuality[]>(`/flow-services?${q(range, network)}`),
   diurnal: (metric: string, range: Range, network: string) =>
     get<DiurnalResponse>(`/diurnal?metric=${metric}&${q(range, network)}`),
   dnsCompare: (range: Range, network: string) =>

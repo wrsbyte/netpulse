@@ -93,6 +93,15 @@ export const useFlowQuality = (range: Range) => {
   })
 }
 
+export const useFlowServices = (range: Range) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['flowServices', range, network],
+    queryFn: () => api.flowServices(range, network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
 export const useGeo = () => {
   const network = useNetwork()
   return useQuery({
