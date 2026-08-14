@@ -102,3 +102,19 @@ def test_crowded_channel_reports_time_stuck() -> None:
     ))
     ch = next(f for f in v.findings if "channel 149 is crowded" in f.title)
     assert "8 h" in ch.detail
+
+
+def test_partial_coverage_is_flagged_so_results_arent_over_read() -> None:
+    v = conclude(WindowStats(
+        loss=0, latency=25, availability=100, coverage_pct=32.0, wifi_signal_avg=-45,
+    ))
+    note = next(f for f in v.findings if "Partial data" in f.title)
+    assert note.severity == "info"
+    assert "32%" in note.detail
+
+
+def test_full_coverage_adds_no_note() -> None:
+    v = conclude(WindowStats(
+        loss=0, latency=25, availability=100, coverage_pct=99.0, wifi_signal_avg=-45,
+    ))
+    assert not any("Partial data" in f.title for f in v.findings)

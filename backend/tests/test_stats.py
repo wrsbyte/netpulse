@@ -3,6 +3,7 @@ import pytest
 from netpulse.analysis.stats import (
     autocorr1,
     block_bootstrap_ci,
+    covered_seconds,
     effective_n,
     ewma,
     gilbert_elliott,
@@ -67,3 +68,18 @@ def test_mad_and_robust_z_flag_outliers() -> None:
     z = robust_z(30, baseline)  # far above the baseline
     assert z is not None and z > 5
     assert robust_z(10, [10, 10, 10]) is None  # no spread -> undefined
+
+
+def test_covered_seconds_caps_suspend_gaps() -> None:
+    # 3s cadence for 30s, then a 2h suspend gap, then 3s cadence again.
+    ts = [float(t) for t in range(0, 31, 3)]
+    ts += [ts[-1] + 7200 + 3 * i for i in range(1, 11)]
+    covered = covered_seconds(ts, max_gap=60.0)
+    # the 2h gap must contribute at most 60s, not 7200s
+    assert covered < 30 + 60 + 30 + 1
+    assert covered > 30  # the real sampled stretches are counted
+
+
+def test_covered_seconds_empty_or_single() -> None:
+    assert covered_seconds([], 60.0) == 0.0
+    assert covered_seconds([5.0], 60.0) == 0.0

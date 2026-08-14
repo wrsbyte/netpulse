@@ -22,7 +22,12 @@ from netpulse.analysis.attribute import HopStat, attribute
 from netpulse.analysis.diurnal import distinct_days, hourly_cells
 from netpulse.analysis.geo import locate_colo, locate_country
 from netpulse.analysis.segment import classify as segment_classify
-from netpulse.analysis.stats import block_bootstrap_ci, gilbert_elliott, spearman
+from netpulse.analysis.stats import (
+    block_bootstrap_ci,
+    covered_seconds,
+    gilbert_elliott,
+    spearman,
+)
 from netpulse.analysis.verdict import WindowStats
 from netpulse.analysis.wifi_channel import ChannelAdvice
 from netpulse.analysis.wifi_channel import analyze as analyze_channel
@@ -72,6 +77,7 @@ from netpulse.external.ripe_atlas import percentile_rank
 from netpulse.quality import percentile
 
 _SOURCE_BY_NAME = {s.name: s for s in SOURCES}
+_COVERAGE_MAX_GAP = 60.0  # s between pings above which the collector was down (suspend), not idle
 
 
 def _scope(
@@ -664,6 +670,10 @@ def gather_stats(
     worst_outage = max(((o.end_ts or now) - o.ts for o in outages), default=None)
     worst_cause = max(outages, key=lambda o: (o.end_ts or now) - o.ts).detail if outages else None
     outages_isp = sum(1 for o in outages if o.detail == "isp")
+    # Only count time we actually sampled: an overnight suspend leaves a gap that must NOT be
+    # read as uptime, or availability (and any before/after comparison) is silently inflated.
+    covered = covered_seconds([p.ts for p in pings], _COVERAGE_MAX_GAP)
+    coverage_pct = 100 * covered / window if window else None
 
     wifi = session.scalars(
         select(WifiRaw).where(WifiRaw.ts >= start, *_scope(WifiRaw.network_id, network_id))
@@ -720,7 +730,8 @@ def gather_stats(
         latency_excess=latency_excess,
         jitter=percentile(jitters, 95) if jitters else None,
         bufferbloat=latest_active.bufferbloat_ms if latest_active else None,
-        availability=max(0.0, 100 * (1 - downtime / window)) if window else None,
+        availability=max(0.0, 100 * (1 - downtime / covered)) if covered else None,
+        coverage_pct=coverage_pct,
         outage_count=len(outages),
         downtime_s=downtime,
         worst_outage_s=worst_outage,

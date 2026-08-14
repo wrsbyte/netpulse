@@ -19,6 +19,7 @@ _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2, "ok": 3}
 _WEAK_SIGNAL_DBM = -72.0
 _OUTLIER_ABS = 3.0  # pp above the typical destination for a target's loss to be a peering outlier
 _OUTLIER_RATIO = 3.0
+_MIN_COVERAGE_PCT = 90.0  # below this, the window was only partly sampled (device suspended)
 _LAYER_LABEL = {
     "wifi-radio": "your WiFi radio",
     "lan-gateway": "your router / LAN",
@@ -37,7 +38,8 @@ class WindowStats:
     latency_excess: float | None = None  # p95 RTT above the path's own empirical floor
     jitter: float | None = None  # p95 ms
     bufferbloat: float | None = None  # latest ms added under load
-    availability: float | None = None  # % of window internet reachable
+    availability: float | None = None  # % of COVERED time internet reachable (gaps excluded)
+    coverage_pct: float | None = None  # % of the window actually sampled (rest = device asleep)
     outage_count: int = 0
     downtime_s: float = 0.0
     worst_outage_s: float | None = None
@@ -172,6 +174,7 @@ def conclude(stats: WindowStats) -> Verdict:
         ))
 
     findings.extend(_wifi_findings(stats))
+    findings.extend(_coverage_findings(stats))
     findings.extend(_route_context_findings(stats))
 
     if stats.dns_total:
@@ -188,6 +191,18 @@ def conclude(stats: WindowStats) -> Verdict:
 
     findings.sort(key=lambda f: _SEVERITY_RANK[f.severity])
     return Verdict(score=score, headline=_headline(score, stats, findings), findings=findings)
+
+
+def _coverage_findings(stats: WindowStats) -> list[Finding]:
+    """Flag a window that was only partly sampled (device suspended) so the numbers — and any
+    before/after comparison — aren't read as if the whole window were observed."""
+    if stats.coverage_pct is None or stats.coverage_pct >= _MIN_COVERAGE_PCT:
+        return []
+    return [Finding(
+        "info", "Partial data — device was asleep",
+        f"Only {stats.coverage_pct:.0f}% of this window was actually sampled; the rest is a "
+        "collection gap (suspend), not uptime. Rates hold, but outage counts under-represent.",
+    )]
 
 
 def _wifi_findings(stats: WindowStats) -> list[Finding]:

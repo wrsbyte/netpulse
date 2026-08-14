@@ -8,6 +8,7 @@ so the collector/API carry no numpy dependency for a handful of series.
 from __future__ import annotations
 
 import random
+from itertools import pairwise
 from statistics import median
 
 from netpulse.quality import percentile
@@ -138,6 +139,17 @@ def gilbert_elliott(bad: list[bool]) -> tuple[float, float]:
         bursts.append(run)
     mean_burst = sum(bursts) / len(bursts) if bursts else 0.0
     return (frac, mean_burst)
+
+
+def covered_seconds(timestamps: list[float], max_gap: float) -> float:
+    """Seconds actually covered by samples: the sum of gaps between consecutive samples, each
+    capped at ``max_gap``. A gap far larger than the sampling cadence (e.g. an overnight suspend)
+    contributes only ``max_gap``, not its full span — so availability is computed over time we
+    actually observed, and a device that was asleep isn't counted as 'up'."""
+    covered = 0.0
+    for prev, cur in pairwise(sorted(timestamps)):
+        covered += min(cur - prev, max_gap)
+    return covered
 
 
 def robust_z(value: float, baseline: list[float]) -> float | None:
