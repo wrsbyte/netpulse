@@ -247,6 +247,23 @@ class RegionalBaseline(Base):
     n: Mapped[int] = mapped_column(Integer)
 
 
+class MediaRaw(NetworkScoped, Base):
+    """Live real-time (UDP/QUIC) media-path quality. `ss` gives no RTT for UDP, so when an active
+    UDP media flow exists we ping its actual remote peer — that ICMP RTT/loss/jitter IS the path a
+    call/game rides, the metric the TCP-only flow probe is blind to."""
+
+    __tablename__ = "media_raw"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[float] = ts_column()
+    remote_ip: Mapped[str] = mapped_column(String)
+    app: Mapped[str | None] = mapped_column(String)
+    endpoints: Mapped[int] = mapped_column(Integer)  # active UDP flows to this peer
+    rtt_ms: Mapped[float | None] = mapped_column(Float)
+    loss_pct: Mapped[float | None] = mapped_column(Float)
+    jitter_ms: Mapped[float | None] = mapped_column(Float)
+
+
 class State(Base):
     """Key/value scratch for the collector (last counters, open events, public IP)."""
 

@@ -45,3 +45,15 @@ def test_metrics_carry_the_technical_numbers() -> None:
     labels = {m.label: m.value for m in browsing.metrics}
     assert labels["Latency"] == 18
     assert labels["DNS lookup"] == 20
+
+
+def test_calls_use_live_media_path_when_active() -> None:
+    # A live call with clean UDP path -> good, and the summary names the app.
+    vs = assess(ExperienceInputs(
+        bufferbloat_ms=200, jitter_ms=40, loss_pct=8,  # proxies say poor...
+        media_jitter_ms=5, media_loss_pct=0.2, media_app="Meet",  # ...but the real call is clean
+    ))
+    calls = next(v for v in vs if v.activity == "Video calls")
+    assert calls.rating == "good"
+    assert "Meet" in calls.summary
+    assert any("live" in m.label for m in calls.metrics)

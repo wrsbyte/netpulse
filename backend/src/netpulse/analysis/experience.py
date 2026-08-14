@@ -21,6 +21,10 @@ class ExperienceInputs:
     download_mbps: float | None = None  # last measured capacity
     upload_mbps: float | None = None
     dns_ms: float | None = None  # median resolver time
+    # Real-time media path (measured on an ACTIVE UDP call/game peer), when one is live:
+    media_jitter_ms: float | None = None
+    media_loss_pct: float | None = None
+    media_app: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +60,23 @@ def _m(label: str, value: float | None, unit: str, good_below: float) -> Metric:
 
 
 def _calls(i: ExperienceInputs) -> ActivityVerdict:
-    # Calls die from jitter, loss and latency-under-load, not from raw bandwidth.
+    # When a real call/game is live, rate its ACTUAL UDP path (measured on the peer), not proxies.
+    if _known(i.media_jitter_ms, i.media_loss_pct):
+        metrics = [
+            _m("Jitter (live)", i.media_jitter_ms, "ms", 15),
+            _m("Loss (live)", i.media_loss_pct, "%", 1),
+        ]
+        good = all(m.ok for m in metrics if m.value is not None)
+        fair = (i.media_loss_pct or 0) < 3 and (i.media_jitter_ms or 0) < 30
+        rating = _rate(good, fair)
+        who = f" on your active call to {i.media_app}" if i.media_app else " on your active call"
+        summary = {
+            "good": f"Call quality is good{who}.",
+            "fair": f"Call usable but glitchy{who}.",
+            "poor": f"Call is degraded{who} — audio/video will drop.",
+        }[rating]
+        return ActivityVerdict("Video calls", rating, summary, metrics)
+    # No live call: estimate from jitter, loss and latency-under-load (bandwidth doesn't matter).
     metrics = [
         _m("Latency under load", i.bufferbloat_ms, "ms", 30),
         _m("Jitter", i.jitter_ms, "ms", 15),

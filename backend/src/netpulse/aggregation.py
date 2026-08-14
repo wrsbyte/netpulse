@@ -22,6 +22,7 @@ from netpulse.db.models import (
     Flow,
     FlowQuality,
     HopLocation,
+    MediaRaw,
     PingRaw,
     TcpConnect,
     ThroughputRaw,
@@ -174,7 +175,9 @@ def _prune(session: Session, retention: Retention, now: float) -> None:
     # can't grow the DB (and the Python-side window scans) without limit. Event/ActiveTest are kept
     # (low-volume outage/speedtest evidence) and RegionalBaseline is tiny.
     txn_cutoff = now - retention.transactional_days * 86400
-    for txn in (Traceroute, Flow, FlowQuality, WifiScan, TcpConnect, AnycastPop, HopLocation):
+    for txn in (
+        Traceroute, Flow, FlowQuality, WifiScan, TcpConnect, AnycastPop, HopLocation, MediaRaw,
+    ):
         session.execute(delete(txn).where(txn.ts < txn_cutoff))
     session.execute(
         delete(Agg).where(Agg.resolution == "5m", Agg.bucket < now - retention.agg5m_days * 86400)

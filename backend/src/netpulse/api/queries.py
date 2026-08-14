@@ -79,6 +79,7 @@ from netpulse.db.models import (
     Flow,
     FlowQuality,
     HopLocation,
+    MediaRaw,
     Network,
     PingRaw,
     RegionalBaseline,
@@ -621,10 +622,19 @@ def experience(session: Session, window: int, network_id: int | None) -> Experie
         )
     ).all()
     dns_ms = percentile([d.query_ms for d in dns if d.query_ms is not None], 50) if dns else None
+    media = session.scalars(
+        select(MediaRaw)
+        .where(MediaRaw.ts >= now - 120, *_scope(MediaRaw.network_id, network_id))
+        .order_by(MediaRaw.ts.desc())
+        .limit(1)
+    ).first()
 
     inputs = ExperienceInputs(
         rtt_ms=rtt_repr,
         loss_pct=typical_loss,
+        media_jitter_ms=media.jitter_ms if media else None,
+        media_loss_pct=media.loss_pct if media else None,
+        media_app=media.app if media else None,
         jitter_ms=percentile(jitters, 95) if jitters else None,
         bufferbloat_ms=active.bufferbloat_ms if active else None,
         download_mbps=active.download_mbps if active else None,
