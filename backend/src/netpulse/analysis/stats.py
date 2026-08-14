@@ -141,6 +141,18 @@ def gilbert_elliott(bad: list[bool]) -> tuple[float, float]:
     return (frac, mean_burst)
 
 
+def blocked_seconds(event_ts: list[float], guard: float) -> set[int]:
+    """Whole-second marks within ``guard`` seconds of any event timestamp. Used to drop ping
+    samples taken while the WiFi radio was off-channel for a scan — those spike every target at
+    once (the gateway too), so they're a measurement artifact, not network loss/latency."""
+    blocked: set[int] = set()
+    span = int(guard)
+    for t in event_ts:
+        centre = int(t)
+        blocked.update(range(centre - span, centre + span + 1))
+    return blocked
+
+
 def covered_seconds(timestamps: list[float], max_gap: float) -> float:
     """Seconds actually covered by samples: the sum of gaps between consecutive samples, each
     capped at ``max_gap``. A gap far larger than the sampling cadence (e.g. an overnight suspend)

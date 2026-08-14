@@ -3,6 +3,7 @@ import pytest
 from netpulse.analysis.stats import (
     autocorr1,
     block_bootstrap_ci,
+    blocked_seconds,
     covered_seconds,
     effective_n,
     ewma,
@@ -83,3 +84,12 @@ def test_covered_seconds_caps_suspend_gaps() -> None:
 def test_covered_seconds_empty_or_single() -> None:
     assert covered_seconds([], 60.0) == 0.0
     assert covered_seconds([5.0], 60.0) == 0.0
+
+
+def test_blocked_seconds_covers_guard_window_around_each_event() -> None:
+    blocked = blocked_seconds([100.0, 900.4], guard=4.0)
+    # 4s each side of 100 and 900
+    assert 96 in blocked and 100 in blocked and 104 in blocked
+    assert 95 not in blocked and 105 not in blocked
+    assert 896 in blocked and 900 in blocked and 904 in blocked
+    assert blocked_seconds([], 4.0) == set()

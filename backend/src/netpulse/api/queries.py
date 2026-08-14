@@ -25,6 +25,7 @@ from netpulse.analysis.geo import locate_colo, locate_country
 from netpulse.analysis.segment import classify as segment_classify
 from netpulse.analysis.stats import (
     block_bootstrap_ci,
+    blocked_seconds,
     covered_seconds,
     gilbert_elliott,
     spearman,
@@ -86,6 +87,7 @@ from netpulse.quality import percentile
 
 _SOURCE_BY_NAME = {s.name: s for s in SOURCES}
 _COVERAGE_MAX_GAP = 60.0  # s between pings above which the collector was down (suspend), not idle
+_SCAN_GUARD = 4.0  # s around a WiFi scan whose ping samples are radio-off-channel artifacts
 
 
 def _scope(
@@ -465,6 +467,7 @@ def experience(session: Session, window: int, network_id: int | None) -> Experie
             PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
         )
     ).all()
+    pings = _drop_scan_artifacts(session, pings, start, network_id)
     rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
     jitters = [p.jitter for p in pings if p.jitter is not None]
     per_target: dict[str, list[float]] = {}
@@ -846,6 +849,7 @@ def gather_stats(
             PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
         )
     ).all()
+    pings = _drop_scan_artifacts(session, pings, start, network_id)
     rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
     jitters = [p.jitter for p in pings if p.jitter is not None]
 
@@ -958,6 +962,23 @@ def gather_stats(
         bgp_stable=bgp_stable,
         window_label=window_label,
     )
+
+
+def _drop_scan_artifacts(
+    session: Session, pings: Sequence[PingRaw], start: float, network_id: int | None
+) -> list[PingRaw]:
+    """Remove ping samples taken while a WiFi neighbour-scan had the radio off-channel: those spike
+    every target (the gateway included) at once, so they're the tool's own measurement artifact,
+    not real loss/latency. The scan data itself (channel congestion) is untouched."""
+    scan_ts = session.scalars(
+        select(WifiScan.ts).where(
+            WifiScan.ts >= start - _SCAN_GUARD, *_scope(WifiScan.network_id, network_id)
+        )
+    ).all()
+    if not scan_ts:
+        return list(pings)
+    blocked = blocked_seconds(list(scan_ts), _SCAN_GUARD)
+    return [p for p in pings if int(p.ts) not in blocked]
 
 
 def _loss_stats(
