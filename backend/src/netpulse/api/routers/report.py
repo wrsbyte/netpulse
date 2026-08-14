@@ -42,7 +42,7 @@ def get_report(
     _, window = window_for(range)
     nid = resolve_network(session, network)
     label = _LABEL.get(range, range)
-    verdict = conclude(queries.gather_stats(session, window, label, nid))
+    verdict = conclude(queries.gather_stats(session, window, f"in {label}", nid))
     sla = queries.sla(session, window, label, nid)
     dns = queries.dns_compare(session, window, nid)
     outages = [e for e in queries.events(session, window, nid) if e.kind == "outage"]
@@ -85,12 +85,15 @@ def get_report(
         ],
         note="No outages recorded in the window." if not outages else "",
     ))
+    def _ms(v: float | None) -> str:
+        return f"{round(v)} ms" if v is not None else "n/a"
+
     sections.append(ReportSection(
         "DNS resolvers",
         [
             ReportRow(
                 d.resolver,
-                f"median {d.median_ms} ms, p95 {d.p95_ms} ms, jitter {d.jitter_ms} ms, "
+                f"median {_ms(d.median_ms)}, p95 {_ms(d.p95_ms)}, jitter {_ms(d.jitter_ms)}, "
                 f"failures {d.fail_pct}% (n={d.n})",
             )
             for d in dns
@@ -116,7 +119,9 @@ def get_report(
         network_label=_network_label(session, nid),
         window_label=label,
         grade=verdict.score.grade,
-        headline=verdict.headline,
+        # the badge already shows "Grade X"; drop that prefix from the headline to avoid printing it
+        # twice, and keep just the human sentence.
+        headline=verdict.headline.split(" — ", 1)[-1].capitalize(),
         sections=sections,
         methodology=METHODOLOGY,
     )

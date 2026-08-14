@@ -262,6 +262,12 @@ def geo_map(session: Session, network_id: int | None) -> GeoResponse:
     return GeoResponse(points=points, arcs=arcs, path=path, path_target=target)
 
 
+def _downtime(outages: Sequence[Event], start: float, now: float) -> float:
+    """Total seconds of recorded outage within [start, now] — one definition used by both the
+    verdict availability and the SLA uptime so they never disagree on the same report."""
+    return sum((o.end_ts or now) - max(o.ts, start) for o in outages)
+
+
 def _latest_flows(
     session: Session, start: float, network_id: int | None
 ) -> dict[str, FlowQuality]:
@@ -274,10 +280,12 @@ def _latest_flows(
         .subquery()
     )
     rows = session.scalars(
-        select(FlowQuality).join(
+        select(FlowQuality)
+        .join(
             latest_ts,
             (FlowQuality.remote_ip == latest_ts.c.remote_ip) & (FlowQuality.ts == latest_ts.c.mts),
         )
+        .where(*_scope(FlowQuality.network_id, network_id))
     ).all()
     return {r.remote_ip: r for r in rows}
 
@@ -490,8 +498,14 @@ def sla(session: Session, window: int, window_label: str, network_id: int | None
             Event.kind == "outage", Event.ts >= start, *_scope(Event.network_id, network_id)
         )
     ).all()
-    downtime = sum((o.end_ts or now) - max(o.ts, start) for o in outages)
-    uptime = max(0.0, 100 * (1 - downtime / window)) if window else None
+    # Uptime over ACTUALLY-SAMPLED time (not wall-clock window), matching the verdict's availability
+    # — otherwise the SLA card and the verdict on the same report contradict each other.
+    ping_ts = session.scalars(
+        select(PingRaw.ts).where(PingRaw.ts >= start, *_scope(PingRaw.network_id, network_id))
+    ).all()
+    covered = covered_seconds(list(ping_ts), _COVERAGE_MAX_GAP)
+    downtime = _downtime(outages, start, now)
+    uptime = max(0.0, 100 * (1 - downtime / covered)) if covered else None
     measured = SlaMeasured(
         download_mbps=percentile(downs, 50) if downs else None,
         upload_mbps=percentile(ups, 50) if ups else None,
@@ -869,7 +883,7 @@ def gather_stats(
             Event.kind == "outage", Event.ts >= start, *_scope(Event.network_id, network_id)
         )
     ).all()
-    downtime = sum((o.end_ts or now) - max(o.ts, start) for o in outages)
+    downtime = _downtime(outages, start, now)
     worst_outage = max(((o.end_ts or now) - o.ts for o in outages), default=None)
     worst_cause = max(outages, key=lambda o: (o.end_ts or now) - o.ts).detail if outages else None
     outages_isp = sum(1 for o in outages if o.detail == "isp")

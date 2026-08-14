@@ -37,8 +37,8 @@ export function SlaPanel() {
                 {fmt(l.measured, l.metric)}
               </div>
               <div className="text-xs text-muted">
-                contracted {fmt(l.contracted, l.metric)}
-                {l.delivered_pct != null && l.metric !== 'Uptime' && (
+                {l.metric === 'Latency' ? 'ceiling' : 'contracted'} {fmt(l.contracted, l.metric)}
+                {l.delivered_pct != null && l.metric !== 'Uptime' && l.metric !== 'Latency' && (
                   <> · {l.delivered_pct.toFixed(0)}% delivered</>
                 )}
               </div>

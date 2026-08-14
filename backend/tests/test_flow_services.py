@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 from netpulse.api import queries
+from netpulse.api.queries import _latest_flows
 from netpulse.db.models import FlowQuality
 from netpulse.db.session import get_session, init_engine
 
@@ -37,3 +38,21 @@ def test_flow_services_collapses_endpoints_by_service(tmp_path: Path) -> None:
     assert by["Google"].endpoints == 1
     # sorted by goodput desc -> Google (4.0) before Microsoft (1.0 summed)
     assert svcs[0].service == "Google"
+
+
+def test_latest_flows_keeps_newest_row_per_ip(tmp_path: Path) -> None:
+
+    init_engine(tmp_path / "latest.db")
+    now = time.time()
+    def fq(ts: float, srtt: float) -> FlowQuality:
+        return FlowQuality(ts=ts, remote_ip="1.2.3.4", asn="15169", app="Google",
+                           srtt_ms=srtt, min_rtt_ms=srtt - 5, retrans_total=0,
+                           delivery_mbps=1.0, sockets=1)
+
+    with get_session() as s:
+        s.add_all([fq(now - 100, 99.0), fq(now - 2, 20.0)])
+        s.commit()
+    with get_session() as s:
+        latest = _latest_flows(s, now - 3600, network_id=None)
+    assert set(latest) == {"1.2.3.4"}
+    assert latest["1.2.3.4"].srtt_ms == 20.0  # the newer row, not the stale 99 ms one

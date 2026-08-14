@@ -3,7 +3,8 @@ import asyncio
 import pytest
 
 from netpulse import shell
-from netpulse.probes import dns, ping, wifi_scan
+from netpulse.db.models import PingRaw
+from netpulse.probes import dns, media, ping, wifi_scan
 
 PING_OK = """PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
 
@@ -92,3 +93,19 @@ def test_dns_dot_labels_resolver_and_uses_tls(monkeypatch) -> None:
     assert "+tls" in captured["args"]
     assert row.resolver == "9.9.9.9 (DoT)"
     assert row.ok is True and row.query_ms == 20.0
+
+
+def test_media_returns_none_when_peer_filters_icmp(monkeypatch) -> None:
+
+    async def fake_ss(*args, timeout=5):  # noqa: ASYNC109
+        class R:
+            ok = True
+            stdout = "State Recv-Q Send-Q Local Peer\nESTAB 0 0 10.0.0.2:5000 8.8.8.8:443\n"
+        return R()
+
+    async def fake_ping(ts, target, af="4"):  # ICMP filtered -> no rtt
+        return PingRaw(ts=ts, target=target, loss_pct=100.0, rtt_avg=None)
+
+    monkeypatch.setattr(media.shell, "run", fake_ss)
+    monkeypatch.setattr(media.ping, "sample", fake_ping)
+    assert asyncio.run(media.sample(1.0, "wlan0")) is None  # not a "100% media loss" row

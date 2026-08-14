@@ -30,10 +30,14 @@ export function StatusBar() {
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
       <Kpi
         label="Status"
-        value={data ? (data.online ? 'Online' : 'Offline') : '—'}
-        tone={data ? (data.online ? 'ok' : 'danger') : 'default'}
-        hint={data?.wifi_ssid ?? undefined}
-        title="Whether any internet target is reachable right now"
+        value={
+          data ? (!data.collector_healthy ? 'Stale' : data.online ? 'Online' : 'Offline') : '—'
+        }
+        tone={data ? (!data.collector_healthy ? 'warn' : data.online ? 'ok' : 'danger') : 'default'}
+        hint={
+          data && !data.collector_healthy ? 'collector offline' : (data?.wifi_ssid ?? undefined)
+        }
+        title="Whether any internet target is reachable right now. 'Stale' = the sampling collector stopped reporting, so these numbers may be outdated."
       />
       <Kpi
         label="Speed (down)"
