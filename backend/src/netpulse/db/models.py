@@ -9,7 +9,7 @@ per-network (the PC moves between home / office / café).
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from netpulse.db.base import Base, ts_column
@@ -42,6 +42,7 @@ class NetworkScoped:
 
 class PingRaw(NetworkScoped, Base):
     __tablename__ = "ping_raw"
+    __table_args__ = (Index("ix_ping_scope_ts", "network_id", "target", "ts"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ts: Mapped[float] = ts_column()
@@ -95,6 +96,7 @@ class Agg(NetworkScoped, Base):
     """Generic downsampled rollup: one row per (network, bucket, resolution, metric, tag)."""
 
     __tablename__ = "agg"
+    __table_args__ = (Index("ix_agg_lookup", "metric", "resolution", "network_id", "bucket"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bucket: Mapped[float] = ts_column()  # bucket start, epoch seconds
@@ -125,6 +127,7 @@ class ActiveTest(NetworkScoped, Base):
 
 class Traceroute(NetworkScoped, Base):
     __tablename__ = "traceroute"
+    __table_args__ = (Index("ix_traceroute_scope_ts", "network_id", "target", "ts"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ts: Mapped[float] = ts_column()
@@ -193,6 +196,7 @@ class FlowQuality(NetworkScoped, Base):
     """
 
     __tablename__ = "flow_quality"
+    __table_args__ = (Index("ix_flow_quality_scope_ts", "network_id", "ts"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ts: Mapped[float] = ts_column()

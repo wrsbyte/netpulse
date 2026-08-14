@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from sqlalchemy import Engine, text
 
+from netpulse.db.base import Base
 from netpulse.db.models import NetworkScoped
 
 # Derived from the mapped models so it can never drift from the schema (audit M3): every table
@@ -30,6 +31,15 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str, bool], ...] = (
     ("wifi_raw", "tx_packets", "INTEGER", False),
     ("wifi_raw", "power_save", "BOOLEAN", False),
 )
+
+
+def ensure_indexes(engine: Engine) -> None:
+    """Create any declared index that a pre-existing DB lacks — `create_all` only indexes tables it
+    creates, so composite indexes added after ship must be applied here (idempotent)."""
+    with engine.begin() as conn:
+        for table in Base.metadata.tables.values():
+            for index in table.indexes:
+                index.create(bind=conn, checkfirst=True)
 
 
 def ensure_network_columns(engine: Engine) -> None:
