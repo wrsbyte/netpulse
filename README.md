@@ -17,7 +17,7 @@ netpulse/
 │   │   ├── probes/     # one module per measurement (ping, wifi, dns, flows…)
 │   │   ├── db/         # SQLAlchemy 2.0 models + session
 │   │   ├── api/        # FastAPI app, routers, read queries
-│   │   ├── collector.py    aggregation.py  alerts.py  quality.py  config.py
+│   │   ├── collector.py    aggregation.py  quality.py  config.py
 │   ├── tests/      # pytest (pure logic + probe-parsing regressions)
 │   └── config.toml # the monitoring plan (targets, intervals, alerts)
 ├── frontend/       # React + TypeScript + Vite + Tailwind + ECharts dashboard
@@ -57,8 +57,8 @@ make doctor
 Connectivity/latency/loss/jitter per layer · WiFi signal/bitrate/retries/roaming · DNS timing
 per resolver · path (per-hop loss via `mtr`) · interface throughput · active bandwidth +
 **bufferbloat grade** and **MOS** · top destinations classified by app/CDN + ASN · derived
-**events** (outages labelled WiFi-vs-ISP, roaming, IP changes) and **threshold alerts** with
-desktop notifications.
+**events** (outages labelled WiFi-vs-ISP, roaming, IP changes, anycast POP flips) — surfaced in
+the verdict and Routes views, not as push notifications.
 
 Core metrics need **no root**. Optional extras (per-hop loss via raw-socket `mtr`) use a
 scoped `NOPASSWD` sudoers entry — see `scripts/sudoers.d/netpulse`. Missing tool or
@@ -67,8 +67,7 @@ permission → that probe is skipped, everything else keeps running.
 ## Configuration
 
 - **Monitoring plan** — `backend/config.toml`: targets (each tagged with the layer it
-  isolates), sampling intervals, retention, active-test cadence, DNS domains/resolvers, alert
-  rules.
+  isolates), sampling intervals, retention, active-test cadence, DNS domains/resolvers.
 - **Runtime** — environment variables (`NETPULSE_DB_PATH`, `NETPULSE_PORT`, …); see
   `Settings` in `backend/src/netpulse/config.py`.
 

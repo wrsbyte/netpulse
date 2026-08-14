@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -80,14 +80,6 @@ class DnsConfig(BaseModel):
     resolvers: list[str]
 
 
-class Alert(BaseModel):
-    name: str
-    metric: str
-    op: Literal["==", ">=", "<=", ">", "<"]
-    value: float
-    for_seconds: int
-
-
 class NetpulseConfig(BaseModel):
     interface: str = ""  # empty -> auto-detect default route
     targets: list[Target]
@@ -95,7 +87,6 @@ class NetpulseConfig(BaseModel):
     active: Active = Active()
     retention: Retention = Retention()
     dns: DnsConfig
-    alerts: list[Alert] = Field(default_factory=list)
 
 
 @lru_cache

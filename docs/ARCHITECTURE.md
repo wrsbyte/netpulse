@@ -73,8 +73,9 @@ pure transforms are factored out for unit testing (e.g. `flows.extract_remotes`,
   gateway also failed, else `isp` — the single most useful attribution.
 - **Bufferbloat grade** (A+…F) from loaded − idle latency; **MOS** (1–5) from the E-model.
   Pure functions in `quality.py`, unit-tested.
-- **Alerts** — sustained threshold breaches (`config.toml`) open an event and fire a
-  `notify-send` toast; cleared when the condition ends (no per-sample flapping).
+
+netpulse is a diagnostic dashboard, not a notifier: the verdict, events and Routes surface the
+state — there are no threshold alerts or desktop notifications.
 
 ## Frontend
 

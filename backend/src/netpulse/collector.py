@@ -3,7 +3,7 @@
 Schedules every probe on its configured cadence (APScheduler), persists results, and derives
 the discrete events that matter: outages (all internet targets down at once — labelled WiFi vs
 ISP by whether the gateway also failed), AP roaming (BSSID change), and public-IP changes.
-Runs the rollup + alert pass on the rollup cadence. Designed to degrade: a probe that raises is
+Runs the downsampling rollup on the rollup cadence. Designed to degrade: a probe that raises is
 logged and skipped, the rest keep sampling.
 """
 
@@ -21,7 +21,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from netpulse import alerts
 from netpulse.aggregation import run_rollups
 from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
 from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
@@ -222,11 +221,8 @@ class Collector:
             self._persist([row])
 
     async def _rollup(self) -> None:
-        now = time.time()
         with _session() as s:
-            run_rollups(s, self.config.retention, now)
-        with _session() as s:
-            await alerts.evaluate(s, self.config.alerts, now, self._network_id)
+            run_rollups(s, self.config.retention, time.time())
 
     # --- derived events ----------------------------------------------------
 

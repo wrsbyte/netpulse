@@ -68,24 +68,3 @@ agg1h_days = 400
 [dns]
 domains = ["google.com", "github.com", "cloudflare.com"]
 resolvers = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
-
-[[alerts]]
-name = "sustained packet loss"
-metric = "ping.loss_pct"
-op = ">="
-value = 20
-for_seconds = 300
-
-[[alerts]]
-name = "weak wifi signal"
-metric = "wifi.signal_dbm"
-op = "<="
-value = -75
-for_seconds = 300
-
-[[alerts]]
-name = "slow dns"
-metric = "dns.query_ms"
-op = ">="
-value = 300
-for_seconds = 300
