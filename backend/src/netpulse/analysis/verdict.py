@@ -140,7 +140,7 @@ def conclude(stats: WindowStats) -> Verdict:
         findings.append(Finding(
             "warning",
             "Latency is unusually high for this connection",
-            f"current p95 RTT {stats.latency:.0f} ms is {stats.latency_anomaly_z:.1f} SD above this "
+            f"current p95 RTT {stats.latency:.0f} ms is {stats.latency_anomaly_z:.1f} SD over this "
             "link's own normal — something changed, not just distance.",
         ))
 
