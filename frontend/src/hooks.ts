@@ -93,6 +93,15 @@ export const useFlowQuality = (range: Range) => {
   })
 }
 
+export const useDiurnal = (metric: string, range: Range) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['diurnal', metric, range, network],
+    queryFn: () => api.diurnal(metric, range, network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
 export const useRawTables = () => useQuery({ queryKey: ['rawTables'], queryFn: api.rawTables })
 
 export const useRaw = (name: string, range: Range, query: RawQuery) => {

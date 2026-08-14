@@ -151,6 +151,21 @@ export interface FlowQuality {
   sockets: number
 }
 
+export interface DiurnalCell {
+  hour: number
+  mean: number
+  ci_lo: number
+  ci_hi: number
+  n: number
+}
+
+export interface DiurnalResponse {
+  metric: string
+  days_observed: number
+  sufficient: boolean
+  cells: DiurnalCell[]
+}
+
 export interface Status {
   online: boolean
   current_rtt: number | null

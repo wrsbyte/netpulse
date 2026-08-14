@@ -147,6 +147,21 @@ class FlowQualityOut(BaseModel):
     sockets: int
 
 
+class DiurnalCell(BaseModel):
+    hour: int
+    mean: float
+    ci_lo: float
+    ci_hi: float
+    n: int
+
+
+class DiurnalResponse(BaseModel):
+    metric: str
+    days_observed: int
+    sufficient: bool  # >= 3 distinct days before a diurnal claim is defensible
+    cells: list[DiurnalCell]
+
+
 class Status(BaseModel):
     online: bool
     current_rtt: float | None

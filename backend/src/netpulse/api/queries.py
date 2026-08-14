@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from sqlalchemy import ColumnElement, Select, func, or_, select
@@ -18,11 +18,14 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from netpulse.aggregation import SOURCES
 from netpulse.analysis.attribute import HopStat, attribute
+from netpulse.analysis.diurnal import distinct_days, hourly_cells
 from netpulse.analysis.stats import block_bootstrap_ci, gilbert_elliott, spearman
 from netpulse.analysis.verdict import WindowStats
 from netpulse.api.schemas import (
     ActivePoint,
     AnycastOut,
+    DiurnalCell,
+    DiurnalResponse,
     EventOut,
     FlowOut,
     FlowQualityOut,
@@ -235,6 +238,27 @@ def recent_flow_quality(
     ]
     out.sort(key=lambda f: f.excess_ms or 0, reverse=True)
     return out[:limit]
+
+
+def diurnal(
+    session: Session, metric: str, window: int, network_id: int | None
+) -> DiurnalResponse:
+    """Per-hour-of-day distribution of loss or latency over internet targets, with CIs and an
+    honest days-observed flag (a diurnal claim needs the pattern to repeat across days)."""
+    start = time.time() - window
+    pings = session.scalars(
+        select(PingRaw).where(
+            PingRaw.ts >= start, PingRaw.target.in_(_internet_hosts()),
+            *_scope(PingRaw.network_id, network_id),
+        )
+    ).all()
+    if metric == "latency":
+        samples = [(p.ts, p.rtt_avg) for p in pings if p.rtt_avg is not None]
+    else:
+        samples = [(p.ts, p.loss_pct) for p in pings]
+    days = distinct_days(samples)
+    cells = [DiurnalCell(**asdict(c)) for c in hourly_cells(samples)]
+    return DiurnalResponse(metric=metric, days_observed=days, sufficient=days >= 3, cells=cells)
 
 
 def current_network_id(session: Session) -> int | None:

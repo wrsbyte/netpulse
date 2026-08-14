@@ -20,6 +20,7 @@ from netpulse.api.deps import db, resolve_network, window_for
 from netpulse.api.schemas import (
     ActivePoint,
     AnycastOut,
+    DiurnalResponse,
     EventOut,
     FindingOut,
     FlowOut,
@@ -108,6 +109,17 @@ def get_anycast(
     network: Annotated[str, Query()] = "current",
 ) -> list[AnycastOut]:
     return queries.latest_anycast(session, resolve_network(session, network))
+
+
+@router.get("/diurnal", response_model=DiurnalResponse)
+def get_diurnal(
+    session: Db,
+    metric: Annotated[str, Query(pattern="^(loss|latency)$")] = "loss",
+    range: Annotated[str, Query()] = "7d",
+    network: Annotated[str, Query()] = "current",
+) -> DiurnalResponse:
+    _, window = window_for(range)
+    return queries.diurnal(session, metric, window, resolve_network(session, network))
 
 
 @router.get("/flow-quality", response_model=list[FlowQualityOut])

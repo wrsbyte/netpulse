@@ -1,6 +1,7 @@
 import type {
   ActivePoint,
   AnycastInfo,
+  DiurnalResponse,
   EventOut,
   FlowOut,
   FlowQuality,
@@ -51,6 +52,8 @@ export const api = {
   anycast: (network: string) => get<AnycastInfo[]>(`/anycast?network=${network}`),
   flowQuality: (range: Range, network: string) =>
     get<FlowQuality[]>(`/flow-quality?${q(range, network)}`),
+  diurnal: (metric: string, range: Range, network: string) =>
+    get<DiurnalResponse>(`/diurnal?metric=${metric}&${q(range, network)}`),
   rawTables: () => get<string[]>('/raw/tables'),
   raw: (name: string, range: Range, network: string, query: RawQuery) =>
     get<RawPage>(`/raw/${name}?${q(range, network)}&${rawParams(query)}`),
