@@ -216,5 +216,7 @@ export interface Status {
   latest_upload_mbps: number | null
   latest_grade: string | null
   latest_mos: number | null
+  current_rx_mbps: number | null
+  current_tx_mbps: number | null
   interface: string
 }

@@ -69,6 +69,7 @@ from netpulse.db.models import (
     PingRaw,
     RegionalBaseline,
     State,
+    ThroughputRaw,
     Traceroute,
     WifiRaw,
     WifiScan,
@@ -400,6 +401,12 @@ def status(session: Session, window: int, interface: str, network_id: int | None
     )
     ipv4 = session.get(State, "public_ipv4")
     ipv6 = session.get(State, "public_ipv6")
+    latest_tput = session.scalars(
+        select(ThroughputRaw)
+        .where(ThroughputRaw.ts >= now - 30, *_scope(ThroughputRaw.network_id, network_id))
+        .order_by(ThroughputRaw.ts.desc())
+        .limit(1)
+    ).first()
 
     return Status(
         online=bool(reachable),
@@ -415,6 +422,8 @@ def status(session: Session, window: int, interface: str, network_id: int | None
         latest_upload_mbps=latest_active.upload_mbps if latest_active else None,
         latest_grade=latest_active.grade if latest_active else None,
         latest_mos=latest_active.mos if latest_active else None,
+        current_rx_mbps=latest_tput.rx_bps / 1e6 if latest_tput else None,
+        current_tx_mbps=latest_tput.tx_bps / 1e6 if latest_tput else None,
         interface=interface,
     )
 

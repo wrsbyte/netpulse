@@ -212,4 +212,6 @@ class Status(BaseModel):
     latest_upload_mbps: float | None
     latest_grade: str | None
     latest_mos: float | None
+    current_rx_mbps: float | None  # live download throughput in use right now
+    current_tx_mbps: float | None  # live upload throughput in use right now
     interface: str

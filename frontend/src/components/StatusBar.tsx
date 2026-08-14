@@ -21,14 +21,25 @@ export function StatusBar() {
   const range = useUi((s) => s.range)
   const { data } = useStatus(range)
 
+  const speedHint = data
+    ? `↑ ${fmt.mbps(data.latest_upload_mbps)}` +
+      (data.current_rx_mbps != null ? ` · now ↓ ${fmt.mbps(data.current_rx_mbps)}` : '')
+    : undefined
+
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
       <Kpi
         label="Status"
         value={data ? (data.online ? 'Online' : 'Offline') : '—'}
         tone={data ? (data.online ? 'ok' : 'danger') : 'default'}
         hint={data?.wifi_ssid ?? undefined}
         title="Whether any internet target is reachable right now"
+      />
+      <Kpi
+        label="Speed (down)"
+        value={fmt.mbps(data?.latest_download_mbps)}
+        hint={speedHint}
+        title="Last speedtest download capacity (Mbps); hint shows upload capacity and the live throughput actually in use right now"
       />
       <Kpi
         label="Latency"
