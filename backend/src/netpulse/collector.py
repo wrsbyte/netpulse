@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import time
@@ -24,8 +25,9 @@ from netpulse import alerts
 from netpulse.aggregation import run_rollups
 from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
 from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
-from netpulse.db.models import AnycastPop, Event, Network, State
+from netpulse.db.models import AnycastPop, Event, Network, RegionalBaseline, State
 from netpulse.db.session import get_session, init_engine
+from netpulse.external import ripe_atlas
 from netpulse.logging import configure_logging, get_logger
 from netpulse.probes import (
     active,
@@ -66,6 +68,7 @@ class Collector:
         if self._network_id is not None:
             self._backfill_network(self._network_id)
         await self._guard(self._anycast)()  # capture the serving POP immediately (long cadence)
+        await self._guard(self._regional_baseline)()  # seed the outside-in baseline at startup
         log.info("starting", iface=self.iface, targets=len(self.config.targets),
                  network_id=self._network_id)
         self._schedule()
@@ -86,6 +89,7 @@ class Collector:
         add(self._guard(self._wifi_scan), "interval", seconds=iv.wifi_scan)
         add(self._guard(self._public_ip), "interval", seconds=iv.public_ip)
         add(self._guard(self._anycast), "interval", seconds=iv.anycast)
+        add(self._guard(self._regional_baseline), "interval", seconds=iv.regional)
         add(self._guard(self._rollup), "interval", seconds=iv.rollup)
         if self.config.active.enabled:
             add(self._guard(self.run_active), "interval", seconds=self.config.active.interval)
@@ -165,6 +169,26 @@ class Collector:
                     continue
                 self._track_ip_change(s, family, value)
             s.commit()
+
+    async def _regional_baseline(self) -> None:
+        rtts = await ripe_atlas.regional_rtts("MX")
+        if not rtts:
+            return
+        now = time.time()
+        user = await ping.sample(now, ripe_atlas.K_ROOT_IP)  # our own RTT to the same reference
+        with _session() as s:
+            s.add(RegionalBaseline(
+                ts=now, source="ripe_atlas", target=ripe_atlas.K_ROOT_IP, country="MX",
+                metric="rtt_ms", values_json=json.dumps(rtts), n=len(rtts),
+            ))
+            if user.rtt_avg is not None:
+                state = s.get(State, "kroot_rtt")
+                if state is None:
+                    s.add(State(key="kroot_rtt", value=str(user.rtt_avg)))
+                else:
+                    state.value = str(user.rtt_avg)
+            s.commit()
+        log.info("regional baseline updated", country="MX", n=len(rtts))
 
     async def _anycast(self) -> None:
         rows = await anycast.sample(time.time())

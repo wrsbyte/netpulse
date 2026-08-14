@@ -8,6 +8,7 @@ follows the PC between home / office / café.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
@@ -53,10 +54,12 @@ from netpulse.db.models import (
     FlowQuality,
     Network,
     PingRaw,
+    RegionalBaseline,
     State,
     Traceroute,
     WifiRaw,
 )
+from netpulse.external.ripe_atlas import percentile_rank
 from netpulse.quality import percentile
 
 _SOURCE_BY_NAME = {s.name: s for s in SOURCES}
@@ -628,6 +631,7 @@ def gather_stats(
     ).first()
 
     anycast_out = _anycast_out_of_country(session, start, network_id)
+    regional_pct, regional_user_rtt = _regional_percentile(session)
     signal_avg = sum(signals) / len(signals) if signals else None
     corr = _loss_retry_corr(session, hosts, start, network_id)
     primary = next((t.host for t in get_config().targets if t.kind == "internet"), None)
@@ -665,8 +669,23 @@ def gather_stats(
         segment=segment,
         loss_retry_corr=corr,
         anycast_out=anycast_out,
+        regional_pct=regional_pct,
+        regional_user_rtt=regional_user_rtt,
         window_label=window_label,
     )
+
+
+def _regional_percentile(session: Session) -> tuple[float | None, float | None]:
+    """Where our own RTT to the reference target sits within the region's RIPE Atlas probes."""
+    baseline = session.scalars(
+        select(RegionalBaseline).order_by(RegionalBaseline.ts.desc()).limit(1)
+    ).first()
+    user = session.get(State, "kroot_rtt")
+    if baseline is None or user is None:
+        return (None, None)
+    user_rtt = float(user.value)
+    values = json.loads(baseline.values_json)
+    return (percentile_rank(user_rtt, values), user_rtt)
 
 
 def _anycast_out_of_country(

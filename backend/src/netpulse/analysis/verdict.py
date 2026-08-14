@@ -48,6 +48,8 @@ class WindowStats:
     loss_retry_corr: float | None = None
     # (provider, colo airport, colo country) for CDNs served from an out-of-country POP.
     anycast_out: list[tuple[str, str, str]] = field(default_factory=list)
+    regional_pct: float | None = None  # percentile of your core-net latency within the region
+    regional_user_rtt: float | None = None
     window_label: str = ""
 
 
@@ -136,30 +138,7 @@ def conclude(stats: WindowStats) -> Verdict:
             "move closer or change channel.",
         ))
 
-    seg = stats.segment
-    if seg and seg.layer == "transit" and seg.transit_ms and seg.local_rtt is not None:
-        findings.append(Finding(
-            "info",
-            "Latency is beyond your ISP, in transit",
-            f"your best-peered path is {seg.local_rtt:.0f} ms (access is fine) but the degraded "
-            f"path adds ~{seg.transit_ms:.0f} ms of transit — international routing, not your "
-            "zone; a VPN may route around it.",
-        ))
-    elif seg and seg.layer == "access" and seg.local_rtt is not None:
-        findings.append(Finding(
-            "warning",
-            "Your ISP's access network is slow",
-            f"even your best-peered path is {seg.local_rtt:.0f} ms — the ISP access/backhaul "
-            "itself is heavy, an operator/local-capacity issue a VPN won't fix.",
-        ))
-
-    for provider, colo, country in stats.anycast_out:
-        findings.append(Finding(
-            "info",
-            f"{provider.title()} served from {colo} ({country})",
-            "out-of-country POP — the ISP routes this CDN abroad instead of an in-country POP, "
-            "adding international latency and loss. A different DNS/VPN may reach a closer POP.",
-        ))
+    findings.extend(_route_context_findings(stats))
 
     if stats.dns_total:
         rate = 100 * stats.dns_fail / stats.dns_total
@@ -175,6 +154,47 @@ def conclude(stats: WindowStats) -> Verdict:
 
     findings.sort(key=lambda f: _SEVERITY_RANK[f.severity])
     return Verdict(score=score, headline=_headline(score, stats, findings), findings=findings)
+
+
+def _route_context_findings(stats: WindowStats) -> list[Finding]:
+    """Non-severity route/region context: where latency accrues, out-of-country POPs, and how
+    the connection ranks regionally. Extracted to keep `conclude` legible."""
+    out: list[Finding] = []
+    seg = stats.segment
+    if seg and seg.layer == "transit" and seg.transit_ms and seg.local_rtt is not None:
+        out.append(Finding(
+            "info", "Latency is beyond your ISP, in transit",
+            f"your best-peered path is {seg.local_rtt:.0f} ms (access is fine) but the degraded "
+            f"path adds ~{seg.transit_ms:.0f} ms of transit — international routing, not your "
+            "zone; a VPN may route around it.",
+        ))
+    elif seg and seg.layer == "access" and seg.local_rtt is not None:
+        out.append(Finding(
+            "warning", "Your ISP's access network is slow",
+            f"even your best-peered path is {seg.local_rtt:.0f} ms — the ISP access/backhaul "
+            "itself is heavy, an operator/local-capacity issue a VPN won't fix.",
+        ))
+
+    for provider, colo, country in stats.anycast_out:
+        out.append(Finding(
+            "info", f"{provider.title()} served from {colo} ({country})",
+            "out-of-country POP — the ISP routes this CDN abroad instead of an in-country POP, "
+            "adding international latency and loss. A different DNS/VPN may reach a closer POP.",
+        ))
+
+    if stats.regional_pct is not None and stats.regional_user_rtt is not None:
+        if stats.regional_pct <= 40:
+            note = "better than most connections in your region"
+        elif stats.regional_pct <= 70:
+            note = "typical for your region"
+        else:
+            note = "worse than most connections in your region"
+        out.append(Finding(
+            "info", "Regional context (RIPE Atlas)",
+            f"your latency to core internet infrastructure ({stats.regional_user_rtt:.0f} ms) is "
+            f"at the {stats.regional_pct:.0f}th percentile of your country's probes — {note}.",
+        ))
+    return out
 
 
 def _attribute_outage(stats: WindowStats) -> str:

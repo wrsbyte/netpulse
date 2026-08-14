@@ -224,6 +224,23 @@ class AnycastPop(NetworkScoped, Base):
     out_of_country: Mapped[bool] = mapped_column(Boolean)
 
 
+class RegionalBaseline(Base):
+    """Cached outside-in reference distribution (e.g. RIPE Atlas MX probes' RTT to a target),
+    so the tool can say 'worse than X% of comparable connections' instead of branding regional
+    reality a fault. Refreshed on a slow cadence; degrades gracefully to inside-out when absent."""
+
+    __tablename__ = "regional_baseline"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[float] = ts_column()
+    source: Mapped[str] = mapped_column(String)  # "ripe_atlas"
+    target: Mapped[str] = mapped_column(String, index=True)
+    country: Mapped[str] = mapped_column(String)
+    metric: Mapped[str] = mapped_column(String)  # "rtt_ms"
+    values_json: Mapped[str] = mapped_column(String)  # JSON list of floats
+    n: Mapped[int] = mapped_column(Integer)
+
+
 class State(Base):
     """Key/value scratch for the collector (last counters, open events, public IP)."""
 

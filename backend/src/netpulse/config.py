@@ -58,6 +58,7 @@ class Intervals(BaseModel):
     wifi_scan: int = 900
     public_ip: int = 300
     anycast: int = 300
+    regional: int = 86400
     rollup: int = 300
 
 
