@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from netpulse import shell
@@ -69,3 +71,24 @@ def test_nmcli_terse_split_handles_escaped_colons() -> None:
 
 async def _async(value: shell.Result) -> shell.Result:
     return value
+
+
+def test_dns_dot_labels_resolver_and_uses_tls(monkeypatch) -> None:
+
+
+    captured = {}
+
+    async def fake_run(*args, timeout=4):  # noqa: ASYNC109
+        captured["args"] = args
+
+        class R:
+            ok = True
+            stdout = "ANSWER: 1\nQuery time: 20 msec"
+
+        return R()
+
+    monkeypatch.setattr(dns.shell, "run", fake_run)
+    row = asyncio.run(dns.sample(1.0, "example.com", "9.9.9.9", tls=True))
+    assert "+tls" in captured["args"]
+    assert row.resolver == "9.9.9.9 (DoT)"
+    assert row.ok is True and row.query_ms == 20.0

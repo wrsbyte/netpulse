@@ -164,11 +164,14 @@ class Collector:
 
     async def _dns(self) -> None:
         now = time.time()
+        domain = self.config.dns.domains[0]  # one domain suffices for the DoT reachability check
         jobs = [
             dns.sample(now, d, r)
             for d in self.config.dns.domains
             for r in ["", *self.config.dns.resolvers]
         ]
+        # DoT (encrypted, port 853) health for the public resolvers — a distinct failure mode.
+        jobs += [dns.sample(now, domain, r, tls=True) for r in self.config.dns.resolvers]
         self._persist(await asyncio.gather(*jobs))
 
     async def _flows(self) -> None:
