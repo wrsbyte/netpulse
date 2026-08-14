@@ -55,3 +55,33 @@ These are genuine gaps, mostly research-grade analysis and product-depth feature
 - **More test coverage**: collector outage/roaming/network-detection paths, `hop_timeline`.
 
 See `ROADMAP.md` for how these sequence. The bar for "done" on each is `PRODUCT_CONVENTIONS.md`.
+
+---
+
+## Round 2 — 2026-08-14 (4-expert panel)
+
+A second panel (adversarial correctness/SRE, UX/data-viz, product/features, code/architecture)
+re-audited the grown codebase. Every confirmed finding was fixed; see the ROADMAP "Delivered"
+section for the feature work done alongside.
+
+### Fixed (correctness)
+- **Self-measurement no longer pollutes the grade.** Ping samples taken during the tool's own WiFi
+  scans and speedtests (they spike every target including the gateway) are excluded from
+  loss/latency stats (`_drop_measurement_artifacts`).
+- **Grade reflects the internet, not the LAN.** `status()` and the score use internet targets
+  (median), not the ~2 ms gateway or the single most-optimistic host. Latency is per-target with a
+  per-target floor; the grade's loss input is the typical *average*, not a p95 of quantized
+  per-cycle loss (which stepped straight to F).
+- **Unbounded growth fixed.** Every append-only table is pruned; a 7d window is capped to raw
+  retention so availability/coverage aren't computed against absent time; diurnal reads rollups.
+- **Drift & correctness.** Migration table list derived from the models; regional baseline follows
+  the client country; on-demand speedtest lock-guarded; the meaningless cumulative `tx_retries`
+  series removed; map null-island (0,0) hops and centroid-stacked services dropped.
+- **Ops/UX.** Collector heartbeat → `collector_healthy` and a header status light; verdict findings
+  ranked (errors prominent, info collapsed); panels have real error states; composite indexes and a
+  SQL `max(ts)` latest-flow fetch replace full-window scans; `queries.py` split (`api/raw_queries.py`).
+
+### Delivered features
+A4 forensic report, B1 anomaly detection (robust_z), B5 SLA tracking, H3 DoT + IPv6 parity,
+UDP/QUIC media-path probe (real call quality). Verified: `make check` + 6 Playwright e2e +
+`doctor.sh`, all green.
