@@ -88,6 +88,8 @@ from netpulse.quality import percentile
 _SOURCE_BY_NAME = {s.name: s for s in SOURCES}
 _COVERAGE_MAX_GAP = 60.0  # s between pings above which the collector was down (suspend), not idle
 _SCAN_GUARD = 4.0  # s around a WiFi scan whose ping samples are radio-off-channel artifacts
+_SPEEDTEST_BEFORE = 5  # s before a speedtest ts to start excluding (the saturation window)
+_SPEEDTEST_AFTER = 55  # s after a speedtest ts to keep excluding
 
 
 def _scope(
@@ -257,6 +259,12 @@ def geo_map(session: Session, network_id: int | None) -> GeoResponse:
     return GeoResponse(points=points, arcs=arcs, path=path, path_target=target)
 
 
+def _plottable(lat: float | None, lon: float | None) -> bool:
+    """Reject (0,0) null-island coordinates — RIPEstat returns them for un-geolocatable IPs, and
+    plotting them draws arcs/lines into the ocean off West Africa."""
+    return lat is not None and lon is not None and not (abs(lat) < 0.5 and abs(lon) < 0.5)
+
+
 def _service_points(
     session: Session,
     network_id: int | None,
@@ -294,14 +302,20 @@ def _service_points(
 
     points: list[GeoPoint] = []
     arcs: list[GeoArc] = []
+    used = set(placed)
     for service in sorted(goodput, key=lambda s: goodput[s], reverse=True)[:8]:
         ip, lat, lon, city, country, rtt = best[service]
-        if (round(lat, 1), round(lon, 1)) in placed:  # don't stack on an already-shown POP
+        if not _plottable(lat, lon):  # skip null-island (0,0) geoloc failures
             continue
+        coord = (round(lat, 1), round(lon, 1))
+        if coord in used:  # a shared coord is a country/registry centroid — don't stack labels
+            continue
+        used.add(coord)
         abroad = client_cc is not None and country is not None and country != client_cc
         rtt_val = rtt if rtt < 1e9 else None
+        where = city or (f"{country}, approx" if country else "approx")
         points.append(GeoPoint(
-            lat=lat, lon=lon, label=f"{service} ({city or country or '?'})",
+            lat=lat, lon=lon, label=f"{service} ({where})",
             kind="service", out_of_country=abroad, provider=service, target=ip,
             rtt_ms=rtt_val, loss_pct=None,
         ))
@@ -341,7 +355,7 @@ def _hop_path(session: Session, network_id: int | None) -> tuple[str | None, lis
     path: list[GeoHop] = []
     for h in hops:
         loc = locations.get(h.host) if h.host else None
-        if loc is None or loc.lat is None or loc.lon is None:
+        if loc is None or loc.lat is None or loc.lon is None or not _plottable(loc.lat, loc.lon):
             continue
         path.append(GeoHop(
             hop=h.hop, ip=h.host or "", lat=loc.lat, lon=loc.lon, city=loc.city,
@@ -527,7 +541,7 @@ def experience(session: Session, window: int, network_id: int | None) -> Experie
             PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
         )
     ).all()
-    pings = _drop_scan_artifacts(session, pings, start, network_id)
+    pings = _drop_measurement_artifacts(session, pings, start, network_id)
     rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
     jitters = [p.jitter for p in pings if p.jitter is not None]
     per_target: dict[str, list[float]] = {}
@@ -909,7 +923,7 @@ def gather_stats(
             PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
         )
     ).all()
-    pings = _drop_scan_artifacts(session, pings, start, network_id)
+    pings = _drop_measurement_artifacts(session, pings, start, network_id)
     rtts = [p.rtt_avg for p in pings if p.rtt_avg is not None]
     jitters = [p.jitter for p in pings if p.jitter is not None]
 
@@ -1024,20 +1038,28 @@ def gather_stats(
     )
 
 
-def _drop_scan_artifacts(
+def _drop_measurement_artifacts(
     session: Session, pings: Sequence[PingRaw], start: float, network_id: int | None
 ) -> list[PingRaw]:
-    """Remove ping samples taken while a WiFi neighbour-scan had the radio off-channel: those spike
-    every target (the gateway included) at once, so they're the tool's own measurement artifact,
-    not real loss/latency. The scan data itself (channel congestion) is untouched."""
+    """Remove ping samples the tool's OWN activity perturbed, so the connection isn't graded on
+    self-induced noise: (a) WiFi neighbour-scans take the radio off-channel and spike every target
+    (the gateway included) at once; (b) the periodic speedtest saturates the link and induces the
+    bufferbloat/loss it would then penalise. The scan/speedtest data themselves are untouched."""
     scan_ts = session.scalars(
         select(WifiScan.ts).where(
             WifiScan.ts >= start - _SCAN_GUARD, *_scope(WifiScan.network_id, network_id)
         )
     ).all()
-    if not scan_ts:
+    active_ts = session.scalars(
+        select(ActiveTest.ts).where(
+            ActiveTest.ts >= start - _SPEEDTEST_AFTER, *_scope(ActiveTest.network_id, network_id)
+        )
+    ).all()
+    if not scan_ts and not active_ts:
         return list(pings)
     blocked = blocked_seconds(list(scan_ts), _SCAN_GUARD)
+    for t in active_ts:  # a speedtest saturates from its start ts for ~tens of seconds
+        blocked.update(range(int(t) - _SPEEDTEST_BEFORE, int(t) + _SPEEDTEST_AFTER + 1))
     return [p for p in pings if int(p.ts) not in blocked]
 
 

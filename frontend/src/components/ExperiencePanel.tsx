@@ -45,9 +45,12 @@ function Card({ a }: { a: Activity }) {
         {a.metrics
           .filter((m) => m.value != null)
           .map((m) => (
-            <span key={m.label} className="text-[11px] tabular-nums">
+            <span key={m.label} className="text-xs tabular-nums">
               <span className="text-muted">{m.label} </span>
-              <span style={{ color: m.ok ? '#8a97ab' : '#f87171' }}>{num(m.value, m.unit)}</span>
+              <span style={{ color: m.ok ? '#34d399' : '#f87171' }}>
+                {m.ok ? '' : '▲ '}
+                {num(m.value, m.unit)}
+              </span>
             </span>
           ))}
       </div>
