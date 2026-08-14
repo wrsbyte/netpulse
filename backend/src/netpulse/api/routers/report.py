@@ -20,6 +20,8 @@ from netpulse.analysis.report import (
 from netpulse.analysis.verdict import conclude
 from netpulse.api import queries
 from netpulse.api.deps import db, resolve_network, window_for
+from netpulse.config import get_config
+from netpulse.db.models import State
 
 router = APIRouter(prefix="/api", tags=["report"])
 Db = Annotated[Session, Depends(db)]
@@ -46,9 +48,24 @@ def get_report(
     sla = queries.sla(session, window, label, nid)
     dns = queries.dns_compare(session, window, nid)
     outages = [e for e in queries.events(session, window, nid) if e.kind == "outage"]
-    _, path = queries._hop_path(session, nid)
+    _, path = queries.hop_path(session, nid)
+
+    cfg = get_config()
+    ipv4 = session.get(State, "public_ipv4")
+    ipv6 = session.get(State, "public_ipv6")
+    plan = []
+    if cfg.sla.download_mbps:
+        plan.append(f"{cfg.sla.download_mbps:g}↓/{cfg.sla.upload_mbps or 0:g}↑ Mbps")
+    if cfg.sla.uptime_pct:
+        plan.append(f"{cfg.sla.uptime_pct}% uptime")
+    identity = [
+        ReportRow("Public IPv4", ipv4.value if ipv4 else "n/a"),
+        ReportRow("Public IPv6", ipv6.value if ipv6 else "n/a"),
+        ReportRow("Contracted plan", ", ".join(plan) if plan else "not configured"),
+    ]
 
     sections = [
+        ReportSection("Connection", identity),
         ReportSection(
             "Findings",
             [ReportRow(f.severity.upper(), f"{f.title}. {f.detail}") for f in verdict.findings],
@@ -70,9 +87,13 @@ def get_report(
                 )
                 for line in sla.lines
             ],
-            note=f"{sla.breaches} contracted metric(s) below what is paid for."
-            if sla.breaches
-            else "",
+            note=(
+                f"{sla.breaches} contracted metric(s) below what is paid for. "
+                if sla.breaches
+                else ""
+            )
+            + "Capacity/latency over the full window; uptime over actually-sampled time "
+            "(ISP-side outages only — local WiFi drops excluded).",
         ))
     sections.append(ReportSection(
         "Outages",
@@ -112,6 +133,20 @@ def get_report(
             ],
         ))
 
+    top = next((f for f in verdict.findings if f.severity in ("error", "warning")), None)
+    if sla.breaches:
+        summary = f"Delivery is below the contracted plan on {sla.breaches} metric(s) {label}."
+        ask = (
+            "Please investigate and restore service to the contracted level. This report is the "
+            "measured evidence over the stated window."
+        )
+    elif top is not None:
+        summary = f"{top.title}. {top.detail}"
+        ask = "Please investigate the issue identified above."
+    else:
+        summary = f"Connection graded {verdict.score.grade} {label}; no contract breach detected."
+        ask = "No action requested — provided for the record."
+
     ctx = ReportContext(
         generated_at=datetime.fromtimestamp(time.time(), UTC).astimezone().strftime(
             "%Y-%m-%d %H:%M %Z"
@@ -122,6 +157,8 @@ def get_report(
         # the badge already shows "Grade X"; drop that prefix from the headline to avoid printing it
         # twice, and keep just the human sentence.
         headline=verdict.headline.split(" — ", 1)[-1].capitalize(),
+        summary=summary,
+        ask=ask,
         sections=sections,
         methodology=METHODOLOGY,
     )

@@ -30,6 +30,8 @@ class ReportContext:
     window_label: str
     grade: str
     headline: str
+    summary: str = ""  # one-line executive summary
+    ask: str = ""  # what the user is asking the ISP to do
     sections: list[ReportSection] = field(default_factory=list)
     methodology: str = ""
 
@@ -61,6 +63,10 @@ def build_report_html(ctx: ReportContext) -> str:
         f" · Generated: {_esc(ctx.generated_at)}</div>",
         f"<p><span class='grade'>Grade {_esc(ctx.grade)}</span> &nbsp; {_esc(ctx.headline)}</p>",
     ]
+    if ctx.summary:
+        parts.append(f"<p><b>Summary.</b> {_esc(ctx.summary)}</p>")
+    if ctx.ask:
+        parts.append(f"<p><b>Requested action.</b> {_esc(ctx.ask)}</p>")
     for sec in ctx.sections:
         parts.append(f"<h2>{_esc(sec.title)}</h2>")
         if sec.rows:

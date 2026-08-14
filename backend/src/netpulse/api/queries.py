@@ -258,7 +258,7 @@ def geo_map(session: Session, network_id: int | None) -> GeoResponse:
     svc_points, svc_arcs = _service_points(session, network_id, client_cc, you, placed)
     points.extend(svc_points)
     arcs.extend(svc_arcs)
-    target, path = _hop_path(session, network_id)
+    target, path = hop_path(session, network_id)
     return GeoResponse(points=points, arcs=arcs, path=path, path_target=target)
 
 
@@ -359,7 +359,7 @@ def _service_points(
     return points, arcs
 
 
-def _hop_path(session: Session, network_id: int | None) -> tuple[str | None, list[GeoHop]]:
+def hop_path(session: Session, network_id: int | None) -> tuple[str | None, list[GeoHop]]:
     """The geolocated hop-by-hop route to the primary internet target: each public hop RIPEstat
     could place, in order, with the RTT/loss measured at that hop."""
     target = next((t.host for t in get_config().targets if t.kind == "internet"), None)
