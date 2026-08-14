@@ -125,6 +125,28 @@ class HopTimeline(BaseModel):
     hops: list[HopSeries]
 
 
+class AnycastOut(BaseModel):
+    provider: str
+    target: str
+    colo: str | None
+    colo_country: str | None
+    client_country: str | None
+    out_of_country: bool
+    ts: float
+
+
+class FlowQualityOut(BaseModel):
+    remote_ip: str
+    asn: str | None
+    app: str | None
+    srtt_ms: float | None
+    min_rtt_ms: float | None
+    excess_ms: float | None  # srtt - min_rtt = current queuing/congestion
+    retrans_total: int | None
+    delivery_mbps: float | None
+    sockets: int
+
+
 class Status(BaseModel):
     online: bool
     current_rtt: float | None

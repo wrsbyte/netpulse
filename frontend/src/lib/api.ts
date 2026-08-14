@@ -1,7 +1,9 @@
 import type {
   ActivePoint,
+  AnycastInfo,
   EventOut,
   FlowOut,
+  FlowQuality,
   HopTimeline,
   NetworkInfo,
   Range,
@@ -46,6 +48,9 @@ export const api = {
   flows: (range: Range, network: string) => get<FlowOut[]>(`/flows?${q(range, network)}`),
   hops: (range: Range, network: string) =>
     get<HopTimeline>(`/traceroute/hops?${q(range, network)}`),
+  anycast: (network: string) => get<AnycastInfo[]>(`/anycast?network=${network}`),
+  flowQuality: (range: Range, network: string) =>
+    get<FlowQuality[]>(`/flow-quality?${q(range, network)}`),
   rawTables: () => get<string[]>('/raw/tables'),
   raw: (name: string, range: Range, network: string, query: RawQuery) =>
     get<RawPage>(`/raw/${name}?${q(range, network)}&${rawParams(query)}`),

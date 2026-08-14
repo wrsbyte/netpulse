@@ -75,6 +75,24 @@ export const useHops = (range: Range) => {
   })
 }
 
+export const useAnycast = () => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['anycast', network],
+    queryFn: () => api.anycast(network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
+export const useFlowQuality = (range: Range) => {
+  const network = useNetwork()
+  return useQuery({
+    queryKey: ['flowQuality', range, network],
+    queryFn: () => api.flowQuality(range, network),
+    refetchInterval: REFRESH_MS,
+  })
+}
+
 export const useRawTables = () => useQuery({ queryKey: ['rawTables'], queryFn: api.rawTables })
 
 export const useRaw = (name: string, range: Range, query: RawQuery) => {

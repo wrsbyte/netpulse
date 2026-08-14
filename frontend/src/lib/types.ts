@@ -129,6 +129,28 @@ export interface HopTimeline {
   hops: HopSeries[]
 }
 
+export interface AnycastInfo {
+  provider: string
+  target: string
+  colo: string | null
+  colo_country: string | null
+  client_country: string | null
+  out_of_country: boolean
+  ts: number
+}
+
+export interface FlowQuality {
+  remote_ip: string
+  asn: string | null
+  app: string | null
+  srtt_ms: number | null
+  min_rtt_ms: number | null
+  excess_ms: number | null
+  retrans_total: number | null
+  delivery_mbps: number | null
+  sockets: number
+}
+
 export interface Status {
   online: boolean
   current_rtt: number | null

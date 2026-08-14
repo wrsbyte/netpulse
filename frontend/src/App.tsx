@@ -1,6 +1,7 @@
 import { DataTab } from './components/DataTab'
 import { Header } from './components/Header'
 import { PathView } from './components/PathView'
+import { RoutesTab } from './components/RoutesTab'
 import { StatusBar } from './components/StatusBar'
 import { Tabs } from './components/Tabs'
 import { VerdictPanel } from './components/VerdictPanel'
@@ -43,6 +44,7 @@ export default function App() {
       <VerdictPanel />
       <Tabs />
       {tab === 'dashboard' && <Dashboard />}
+      {tab === 'routes' && <RoutesTab />}
       {tab === 'path' && <PathView />}
       {tab === 'data' && <DataTab />}
       <footer className="pt-2 text-center text-xs text-muted">

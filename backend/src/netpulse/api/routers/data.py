@@ -19,9 +19,11 @@ from netpulse.api import queries
 from netpulse.api.deps import db, resolve_network, window_for
 from netpulse.api.schemas import (
     ActivePoint,
+    AnycastOut,
     EventOut,
     FindingOut,
     FlowOut,
+    FlowQualityOut,
     HopTimeline,
     NetworkOut,
     ScoreOut,
@@ -98,6 +100,24 @@ def get_status(
 @router.get("/networks", response_model=list[NetworkOut])
 def get_networks(session: Db) -> list[NetworkOut]:
     return queries.networks(session)
+
+
+@router.get("/anycast", response_model=list[AnycastOut])
+def get_anycast(
+    session: Db,
+    network: Annotated[str, Query()] = "current",
+) -> list[AnycastOut]:
+    return queries.latest_anycast(session, resolve_network(session, network))
+
+
+@router.get("/flow-quality", response_model=list[FlowQualityOut])
+def get_flow_quality(
+    session: Db,
+    range: Annotated[str, Query()] = "6h",
+    network: Annotated[str, Query()] = "current",
+) -> list[FlowQualityOut]:
+    _, window = window_for(range)
+    return queries.recent_flow_quality(session, window, resolve_network(session, network))
 
 
 @router.get("/traceroute/hops", response_model=HopTimeline)

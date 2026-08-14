@@ -22,8 +22,10 @@ from netpulse.analysis.stats import spearman
 from netpulse.analysis.verdict import WindowStats
 from netpulse.api.schemas import (
     ActivePoint,
+    AnycastOut,
     EventOut,
     FlowOut,
+    FlowQualityOut,
     HopPoint,
     HopSeries,
     HopTimeline,
@@ -44,6 +46,7 @@ from netpulse.db.models import (
     DnsRaw,
     Event,
     Flow,
+    FlowQuality,
     Network,
     PingRaw,
     State,
@@ -181,6 +184,57 @@ def networks(session: Session) -> list[NetworkOut]:
         )
         for n in rows
     ]
+
+
+def latest_anycast(session: Session, network_id: int | None) -> list[AnycastOut]:
+    rows = session.scalars(
+        select(AnycastPop)
+        .where(*_scope(AnycastPop.network_id, network_id))
+        .order_by(AnycastPop.ts.desc())
+    ).all()
+    seen: set[str] = set()
+    out: list[AnycastOut] = []
+    for r in rows:
+        key = f"{r.provider}:{r.target}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(AnycastOut(
+            provider=r.provider, target=r.target, colo=r.colo, colo_country=r.colo_country,
+            client_country=r.client_country, out_of_country=r.out_of_country, ts=r.ts,
+        ))
+    return out
+
+
+def recent_flow_quality(
+    session: Session, window: int, network_id: int | None, limit: int = 40
+) -> list[FlowQualityOut]:
+    """Latest passive transport-quality per endpoint over the window, worst congestion first."""
+    start = time.time() - window
+    rows = session.scalars(
+        select(FlowQuality)
+        .where(FlowQuality.ts >= start, *_scope(FlowQuality.network_id, network_id))
+        .order_by(FlowQuality.ts.desc())
+    ).all()
+    latest: dict[str, FlowQuality] = {}
+    for r in rows:
+        latest.setdefault(r.remote_ip, r)  # first seen = most recent (desc order)
+
+    def excess(r: FlowQuality) -> float | None:
+        if r.srtt_ms is not None and r.min_rtt_ms is not None:
+            return round(max(0.0, r.srtt_ms - r.min_rtt_ms), 1)
+        return None
+
+    out = [
+        FlowQualityOut(
+            remote_ip=r.remote_ip, asn=r.asn, app=r.app, srtt_ms=r.srtt_ms,
+            min_rtt_ms=r.min_rtt_ms, excess_ms=excess(r), retrans_total=r.retrans_total,
+            delivery_mbps=r.delivery_mbps, sockets=r.sockets,
+        )
+        for r in latest.values()
+    ]
+    out.sort(key=lambda f: f.excess_ms or 0, reverse=True)
+    return out[:limit]
 
 
 def current_network_id(session: Session) -> int | None:
