@@ -168,6 +168,10 @@ class GeoPoint(BaseModel):
     label: str
     kind: str  # "you" | "pop"
     out_of_country: bool
+    provider: str | None = None
+    target: str | None = None  # the IP/host we probe for this POP
+    rtt_ms: float | None = None  # measured avg RTT to this destination
+    loss_pct: float | None = None  # measured avg loss to this destination
 
 
 class GeoArc(BaseModel):
@@ -176,6 +180,8 @@ class GeoArc(BaseModel):
     to_lat: float
     to_lon: float
     out_of_country: bool
+    rtt_ms: float | None = None
+    loss_pct: float | None = None
 
 
 class GeoResponse(BaseModel):

@@ -209,30 +209,62 @@ def networks(session: Session) -> list[NetworkOut]:
 
 
 def geo_map(session: Session, network_id: int | None) -> GeoResponse:
-    """You + the CDN POPs serving you, coarsely geolocated, with arcs — the route picture."""
+    """You + the CDN POPs serving you, geolocated and annotated with the RTT/loss actually measured
+    to each — so the map shows not just where traffic goes but how good each path is."""
     pops = latest_anycast(session, network_id)
+    measured = _measured_by_target(session, network_id)
     client_cc = next((p.client_country for p in pops if p.client_country), None)
     you = locate_country(client_cc)
     points: list[GeoPoint] = []
     arcs: list[GeoArc] = []
     if you:
+        gw = _gateway_host()
+        gw_rtt, gw_loss = measured.get(gw, (None, None)) if gw else (None, None)
         points.append(GeoPoint(
             lat=you[0], lon=you[1], label=f"You ({client_cc})", kind="you", out_of_country=False,
+            rtt_ms=gw_rtt, loss_pct=gw_loss,
         ))
     for p in pops:
         loc = locate_colo(p.colo)
         if loc is None:
             continue
+        rtt, loss = measured.get(p.target, (None, None))
         label = f"{p.provider.title()} {p.colo} ({p.colo_country})"
         points.append(GeoPoint(
             lat=loc[0], lon=loc[1], label=label, kind="pop", out_of_country=p.out_of_country,
+            provider=p.provider, target=p.target, rtt_ms=rtt, loss_pct=loss,
         ))
         if you:
             arcs.append(GeoArc(
                 from_lat=you[0], from_lon=you[1], to_lat=loc[0], to_lon=loc[1],
-                out_of_country=p.out_of_country,
+                out_of_country=p.out_of_country, rtt_ms=rtt, loss_pct=loss,
             ))
     return GeoResponse(points=points, arcs=arcs)
+
+
+def _gateway_host() -> str | None:
+    return next((t.host for t in get_config().targets if t.kind == "lan"), None)
+
+
+def _measured_by_target(
+    session: Session, network_id: int | None
+) -> dict[str, tuple[float | None, float | None]]:
+    """Avg RTT and loss per probed target over the last 30 min — the live quality of each path."""
+    start = time.time() - 1800
+    rows = session.scalars(
+        select(PingRaw).where(PingRaw.ts >= start, *_scope(PingRaw.network_id, network_id))
+    ).all()
+    by_target: dict[str, list[PingRaw]] = {}
+    for p in rows:
+        by_target.setdefault(p.target, []).append(p)
+    out: dict[str, tuple[float | None, float | None]] = {}
+    for target, ps in by_target.items():
+        rtts = [p.rtt_avg for p in ps if p.rtt_avg is not None]
+        out[target] = (
+            sum(rtts) / len(rtts) if rtts else None,
+            sum(p.loss_pct for p in ps) / len(ps),
+        )
+    return out
 
 
 def latest_anycast(session: Session, network_id: int | None) -> list[AnycastOut]:

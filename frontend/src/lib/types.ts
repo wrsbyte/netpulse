@@ -172,6 +172,10 @@ export interface GeoPoint {
   label: string
   kind: 'you' | 'pop'
   out_of_country: boolean
+  provider: string | null
+  target: string | null
+  rtt_ms: number | null
+  loss_pct: number | null
 }
 
 export interface GeoArc {
@@ -180,6 +184,8 @@ export interface GeoArc {
   to_lat: number
   to_lon: number
   out_of_country: boolean
+  rtt_ms: number | null
+  loss_pct: number | null
 }
 
 export interface GeoResponse {
