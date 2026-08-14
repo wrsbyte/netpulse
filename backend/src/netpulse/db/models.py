@@ -47,6 +47,7 @@ class PingRaw(NetworkScoped, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ts: Mapped[float] = ts_column()
     target: Mapped[str] = mapped_column(String, index=True)
+    af: Mapped[str] = mapped_column(String, default="4")  # address family: "4" | "6"
     loss_pct: Mapped[float] = mapped_column(Float)
     rtt_min: Mapped[float | None] = mapped_column(Float)
     rtt_avg: Mapped[float | None] = mapped_column(Float)

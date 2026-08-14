@@ -1004,6 +1004,7 @@ def gather_stats(
 
     latency_p95, latency_excess = _latency_stats(pings)
     latency_anomaly_z = _latency_anomaly(session, latency_p95, network_id)
+    ipv6_broken = _ipv6_broken(session, start, network_id, v4_ok=bool(pings))
 
     outages = session.scalars(
         select(Event).where(
@@ -1089,6 +1090,7 @@ def gather_stats(
         outages_isp=outages_isp,
         dns_fail=dns_fail,
         dns_total=len(dns),
+        ipv6_broken=ipv6_broken,
         attribution=attribution,
         segment=segment,
         loss_retry_corr=corr,
@@ -1124,6 +1126,21 @@ def _drop_measurement_artifacts(
     for t in active_ts:  # a speedtest saturates from its start ts for ~tens of seconds
         blocked.update(range(int(t) - _SPEEDTEST_BEFORE, int(t) + _SPEEDTEST_AFTER + 1))
     return [p for p in pings if int(p.ts) not in blocked]
+
+
+def _ipv6_broken(
+    session: Session, start: float, network_id: int | None, v4_ok: bool
+) -> bool:
+    """True when IPv6 targets are all unreachable while IPv4 works — the dual-stack failure that
+    causes happy-eyeballs stalls. Requires v6 samples (else IPv6 simply isn't configured)."""
+    if not v4_ok:
+        return False
+    v6 = session.scalars(
+        select(PingRaw.loss_pct).where(
+            PingRaw.ts >= start, PingRaw.af == "6", *_scope(PingRaw.network_id, network_id)
+        )
+    ).all()
+    return len(v6) >= 3 and all(loss >= 100 for loss in v6)
 
 
 def _latency_anomaly(

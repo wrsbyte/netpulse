@@ -133,3 +133,9 @@ def test_stable_distant_link_is_not_an_anomaly() -> None:
         loss=0, latency=80, latency_anomaly_z=0.5, availability=100, wifi_signal_avg=-45,
     ))
     assert not any('unusually high' in f.title for f in v.findings)
+
+
+def test_broken_ipv6_is_flagged() -> None:
+    v = conclude(WindowStats(loss=0, latency=20, availability=100, ipv6_broken=True,
+                             wifi_signal_avg=-45))
+    assert any('IPv6 is not working' in f.title for f in v.findings)

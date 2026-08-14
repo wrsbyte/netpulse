@@ -54,6 +54,7 @@ class WindowStats:
     outages_isp: int = 0  # of outage_count, how many had the gateway still reachable (ISP-side)
     dns_fail: int = 0
     dns_total: int = 0
+    ipv6_broken: bool = False  # IPv6 targets unreachable while IPv4 works (happy-eyeballs stalls)
     attribution: Attribution | None = None
     segment: SegmentVerdict | None = None
     loss_retry_corr: float | None = None
@@ -180,6 +181,15 @@ def conclude(stats: WindowStats) -> Verdict:
             "warning" if loss < 20 else "error",
             f"Packet loss to {host}",
             f"{loss:.1f}% average loss{ci_txt}{burst_txt} — degrades calls and page loads.",
+        ))
+
+    if stats.ipv6_broken:
+        findings.append(Finding(
+            "warning",
+            "IPv6 is not working",
+            "IPv6 targets are unreachable while IPv4 is fine — on a dual-stack network this causes "
+            "happy-eyeballs stalls (sites pause ~1 s before falling back to IPv4). Check the "
+            "router's IPv6 or disable it if unused.",
         ))
 
     findings.extend(_wifi_findings(stats))

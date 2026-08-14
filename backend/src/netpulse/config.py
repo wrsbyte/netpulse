@@ -95,6 +95,7 @@ class Sla(BaseModel):
 class NetpulseConfig(BaseModel):
     interface: str = ""  # empty -> auto-detect default route
     targets: list[Target]
+    ipv6_targets: list[str] = []  # IPv6 addresses to ping in parallel, for IPv4-vs-IPv6 parity
     intervals: Intervals = Intervals()
     active: Active = Active()
     retention: Retention = Retention()

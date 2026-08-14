@@ -100,6 +100,7 @@ class Collector:
         add = self.scheduler.add_job
         add(self._guard(self._sync_network), "interval", seconds=iv.network)
         add(self._guard(self._ping), "interval", seconds=iv.ping)
+        add(self._guard(self._ping6), "interval", seconds=iv.ping)
         add(self._guard(self._tcp_connect), "interval", seconds=iv.tcp_connect)
         add(self._guard(self._wifi), "interval", seconds=iv.wifi)
         add(self._guard(self._wifi_events), "interval", seconds=iv.wifi_events)
@@ -140,6 +141,15 @@ class Collector:
             s.add_all(results)
             self._detect_outage(s, now, results)
             s.commit()
+
+    async def _ping6(self) -> None:
+        if not self.config.ipv6_targets:
+            return
+        now = time.time()
+        results = await asyncio.gather(
+            *(ping.sample(now, host, af="6") for host in self.config.ipv6_targets)
+        )
+        self._persist(results)
 
     async def _wifi(self) -> None:
         row = await wifi.sample(time.time(), self.iface)
