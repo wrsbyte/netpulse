@@ -9,6 +9,7 @@ Both are Pydantic models so everything downstream is typed and validated at load
 
 from __future__ import annotations
 
+import os
 import tomllib
 from functools import lru_cache
 from pathlib import Path
@@ -29,6 +30,10 @@ class Settings(BaseSettings):
     config_path: Path = BACKEND_DIR / "config.toml"
     host: str = "127.0.0.1"
     port: int = 8477
+    # The dashboard fires ~16 queries per load and refetches every 15s; a single worker serialises
+    # the CPU-bound aggregation on the GIL. Separate processes (SQLite WAL allows concurrent
+    # readers) let those parallelise. Scales with cores, capped low since this is a localhost tool.
+    workers: int = max(2, min(4, (os.cpu_count() or 2)))
     log_level: str = "INFO"
     # Absolute path to the built frontend (dist). Served by the API when present.
     frontend_dist: Path = BACKEND_DIR.parent / "frontend" / "dist"

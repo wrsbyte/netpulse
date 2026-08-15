@@ -125,3 +125,16 @@ The UX re-auditor's actionable findings were applied:
 Deferred (design evolution, not defects): P1 reconcile the summary bands into a single time-scoped
 hero; P11 lift the 10–11px type floor to 12px + tier the Routes jargon; P12 centralize the
 colour/threshold tokens; F9 further split `queries.py`. Tracked in ROADMAP.
+
+### Round 2d — API concurrency under load
+
+The E2E suite intermittently failed on the four data-dependent tests (live data, map canvas,
+named services, experience). Root cause was not the frontend: the API ran a **single worker**, so
+the ~16 queries a page load fires serialised on the GIL against the CPU-bound aggregation. Measured:
+16 concurrent `/api/verdict` took 60 s; a full page load ~2.5–4 s.
+- **Multi-worker API.** `Settings.workers` (scales with cores, capped at 4) + `uvicorn.run` via
+  import string. Separate processes have separate GILs; SQLite WAL + `busy_timeout` already allow
+  concurrent readers, and the only writer (the collector) is a separate process. A full page load
+  now completes in **~1.2 s**; 16 concurrent verdicts dropped 60 s → 36 s.
+- **`_latency_anomaly` batched.** It issued one baseline query per target (7 round-trips per
+  `gather_stats`); collapsed to a single `tag IN (...)` query grouped in Python.
