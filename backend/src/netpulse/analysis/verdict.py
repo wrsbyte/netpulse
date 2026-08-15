@@ -11,8 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from netpulse.analysis.attribute import Attribution
+from netpulse.analysis.local_attribution import LocalVerdict
 from netpulse.analysis.score import HealthInputs, HealthScore, health
 from netpulse.analysis.segment import SegmentVerdict
+from netpulse.analysis.topology import TopologyVerdict
 from netpulse.analysis.wifi_channel import ChannelAdvice
 
 _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2, "ok": 3}
@@ -56,8 +58,12 @@ class WindowStats:
     dns_total: int = 0
     ipv6_broken: bool = False  # IPv6 targets unreachable while IPv4 works (happy-eyeballs stalls)
     attribution: Attribution | None = None
+    local_attribution: LocalVerdict | None = None  # LAN/WiFi vs access/ISP split (first hop vs e2e)
+    topology: TopologyVerdict | None = None  # architecture: double-NAT, CGNAT, mesh, stuck-far-AP
+    roam_count: int = 0  # BSSID changes in the window — frequent = a flapping mesh handoff
     segment: SegmentVerdict | None = None
     loss_retry_corr: float | None = None
+    insufficient_data: bool = False  # too few samples to grade honestly (shows instead of a letter)
     # (provider, colo airport, colo country) for CDNs served from an out-of-country POP.
     anycast_out: list[tuple[str, str, str]] = field(default_factory=list)
     regional_pct: float | None = None  # percentile of your core-net latency within the region
@@ -193,6 +199,9 @@ def conclude(stats: WindowStats) -> Verdict:
         ))
 
     findings.extend(_wifi_findings(stats))
+    findings.extend(_local_findings(stats))
+    findings.extend(_bufferbloat_finding(stats))
+    findings.extend(_topology_findings(stats))
     findings.extend(_coverage_findings(stats))
     findings.extend(_route_context_findings(stats))
 
@@ -205,11 +214,106 @@ def conclude(stats: WindowStats) -> Verdict:
                 f"{stats.dns_fail}/{stats.dns_total} lookups failed ({rate:.1f}%).",
             ))
 
-    if not findings:
-        findings.append(Finding("ok", "Network healthy", "No outages, loss or DNS issues."))
+    findings.extend(_fallback_findings(stats, findings))
 
     findings.sort(key=lambda f: _SEVERITY_RANK[f.severity])
     return Verdict(score=score, headline=_headline(score, stats, findings), findings=findings)
+
+
+def _fallback_findings(stats: WindowStats, findings: list[Finding]) -> list[Finding]:
+    if stats.insufficient_data:
+        return [Finding(
+            "info", "Insufficient data",
+            "too few samples on this network yet to grade it fairly — keep it connected to build "
+            "history; the numbers below are provisional.",
+        )]
+    if not findings:
+        return [Finding("ok", "Network healthy", "No outages, loss or DNS issues.")]
+    return []
+
+
+_BUFFERBLOAT_MS = 30.0  # added latency under load above which calls/gaming suffer during a download
+_FREQUENT_ROAMS = 10  # BSSID changes in a window above which the mesh handoff is thrashing
+
+
+def _bufferbloat_finding(stats: WindowStats) -> list[Finding]:
+    """High latency-under-load, attributed to a layer: on WiFi with local-born jitter it is largely
+    airtime and a wired test isolates it; wired, it is the CPE/ISP queue (fix with SQM on a router
+    you control)."""
+    bb = stats.bufferbloat
+    if bb is None or bb < _BUFFERBLOAT_MS:
+        return []
+    wired = stats.topology.wired if stats.topology else False
+    local = stats.local_attribution is not None and stats.local_attribution.layer == "local"
+    if wired:
+        where = "this is the modem/router queue (CPE); fix it with SQM/fq_codel on your own router"
+    elif local:
+        where = "on WiFi much of it is airtime — test once on a cable to see how much is the line"
+    else:
+        where = "test once on a cable to split WiFi airtime from the modem/router queue"
+    return [Finding(
+        "warning", "Bufferbloat under load",
+        f"latency rises ~{bb:.0f} ms when the link is busy, so calls/gaming stutter during a "
+        f"download — {where}.",
+    )]
+
+
+def _topology_findings(stats: WindowStats) -> list[Finding]:
+    """Architecture misconfigurations the end-to-end numbers hide: double-NAT, CGNAT, and being
+    associated with a weaker AP than a same-SSID one in range (mesh roaming failure)."""
+    t = stats.topology
+    if t is None:
+        return []
+    out: list[Finding] = []
+    if t.double_nat:
+        out.append(Finding(
+            "warning", "Double-NAT detected",
+            f"the route starts with {t.leading_private_hops} private hops — there is a second "
+            "router behind your gateway. This breaks port-forwarding and adds latency; put one "
+            "router in bridge mode so only one device does NAT.",
+        ))
+    if t.cgnat:
+        out.append(Finding(
+            "info", "You are behind CGNAT",
+            "your public IP is carrier-grade NAT (100.64.0.0/10), so you have no real inbound "
+            "reachability — hosting, port-forwarding and some P2P/gaming won't work. Ask the ISP "
+            "for a public IP if you need it.",
+        ))
+    if t.stuck_on_far_ap:
+        out.append(Finding(
+            "warning", "Associated with a weaker access point",
+            f"a same-network AP is much stronger than the one you're on ({t.ap_count} APs share "
+            "this SSID). Your device isn't roaming to the best one — forget/reconnect, or enable "
+            "band-steering/802.11r on the mesh.",
+        ))
+    if stats.roam_count >= _FREQUENT_ROAMS:
+        out.append(Finding(
+            "warning", "Frequent WiFi roaming",
+            f"your device changed access point {stats.roam_count} times — a flapping mesh handoff "
+            "drops connections mid-call. Space the mesh nodes better or lock a band.",
+        ))
+    return out
+
+
+def _local_findings(stats: WindowStats) -> list[Finding]:
+    """LAN-vs-WAN attribution: name the layer so the fix is unambiguous — reconfigure your own WiFi,
+    or take evidence to the ISP. The automatic form of the gateway-vs-internet ping comparison."""
+    la = stats.local_attribution
+    if la is None or la.layer == "ok":
+        return []
+    if la.layer == "local":
+        return [Finding(
+            "warning", "The instability is your WiFi/LAN, not the ISP",
+            f"jitter to your own gateway ({la.gw_jitter_ms:.0f} ms) is about as high as to the "
+            f"internet ({la.e2e_jitter_ms:.0f} ms), so the variance is born on the local link. Fix "
+            "it with channel/width/placement or a cable; the ISP can't help with this.",
+        )]
+    return [Finding(
+        "info", "The instability is past your gateway (ISP/access)",
+        f"your gateway is steady ({la.gw_jitter_ms:.0f} ms jitter) while the internet path swings "
+        f"({la.e2e_jitter_ms:.0f} ms) — the problem is on the access/ISP side, not your LAN. This "
+        "is the evidence to report to your ISP.",
+    )]
 
 
 def _coverage_findings(stats: WindowStats) -> list[Finding]:
@@ -240,17 +344,25 @@ def _wifi_findings(stats: WindowStats) -> list[Finding]:
             "(NetworkManager wifi.powersave = 2).",
         ))
     ca = stats.channel_advice
-    if ca and ca.crowded and ca.best_alternative is not None:
+    if ca and ca.crowded:
         stuck_txt = (
             f" (auto-selected and held for ~{stats.hours_on_channel:.0f} h)"
             if stats.hours_on_channel is not None and stats.hours_on_channel >= 1
             else ""
         )
-        out.append(Finding(
-            "warning", f"WiFi channel {ca.current} is crowded",
-            f"{ca.aps_on_current} APs share your 5 GHz 80 MHz block{stuck_txt}; switch the router "
-            f"to channel {ca.best_alternative} ({ca.alternative_aps} APs in that block, no DFS).",
-        ))
+        if ca.recommend_narrow:
+            out.append(Finding(
+                "warning", f"WiFi channel {ca.current} is congested only at its width",
+                f"{ca.aps_on_current} strong APs share your 5 GHz block{stuck_txt}, but few sit on "
+                "your primary channel; narrow the width (80 to 40 MHz) to stop overlapping them, "
+                "no channel change needed.",
+            ))
+        elif ca.best_alternative is not None:
+            out.append(Finding(
+                "warning", f"WiFi channel {ca.current} is crowded",
+                f"{ca.aps_on_current} strong APs share your 5 GHz block{stuck_txt}; move to "
+                f"channel {ca.best_alternative} ({ca.alternative_aps} APs there, no DFS).",
+            ))
     return out
 
 
@@ -329,6 +441,8 @@ def _attribute_outage(stats: WindowStats) -> str:
 
 
 def _headline(score: HealthScore, stats: WindowStats, findings: list[Finding]) -> str:
+    if stats.insufficient_data:
+        return f"Insufficient data to grade this network {stats.window_label}".strip()
     top = findings[0]
     if top.severity == "ok":
         return f"Grade {score.grade} — your internet was healthy {stats.window_label}".strip()

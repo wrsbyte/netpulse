@@ -3,12 +3,45 @@ from pathlib import Path
 
 from netpulse.analysis.verdict import conclude
 from netpulse.api import queries
-from netpulse.db.models import PingRaw
+from netpulse.db.models import Network, PingRaw
 from netpulse.db.session import get_session, init_engine
 
 
 def _ping(ts: float, target: str, rtt: float, loss: float = 0.0) -> PingRaw:
     return PingRaw(ts=ts, target=target, loss_pct=loss, rtt_avg=rtt, rtt_min=rtt - 1, jitter=1.0)
+
+
+def test_local_attribution_uses_best_path_not_pooled(tmp_path: Path) -> None:
+    # The gateway jitters (WiFi spikes 2->60 ms); every internet path carries that same jitter, and
+    # a far host sits at a high baseline (150 ms). Pooling targets would read the 135 ms baseline
+    # gap as "internet jitter" and wrongly blame the ISP; per-target-best must see the shared
+    # first-hop jitter and attribute to LOCAL.
+    init_engine(tmp_path / "gs_la.db")
+    now = time.time()
+    with get_session() as s:
+        net = Network(
+            key="k", ssid="w", gateway_ip="192.168.1.254", label="w",
+            first_seen=now, last_seen=now,
+        )
+        s.add(net)
+        s.flush()
+        nid = net.id
+        for i in range(40):
+            t = now - i * 3
+            spike = i % 3 == 0
+            rows = [
+                _ping(t, "192.168.1.254", 60.0 if spike else 2.0),  # gateway (WiFi) jitter
+                _ping(t, "8.8.8.8", 73.0 if spike else 15.0),       # near path, same jitter
+                _ping(t, "131.153.11.143", 208.0 if spike else 150.0),  # far path, same jitter
+            ]
+            for r in rows:
+                r.network_id = nid
+            s.add_all(rows)
+        s.commit()
+    with get_session() as s:
+        stats = queries.gather_stats(s, window=6 * 3600, window_label="", network_id=nid)
+    assert stats.local_attribution is not None
+    assert stats.local_attribution.layer == "local"  # not fooled by the far host's baseline
 
 
 def test_latency_is_per_target_not_pooled(tmp_path: Path) -> None:

@@ -63,8 +63,11 @@ class WifiRaw(NetworkScoped, Base):
     ssid: Mapped[str | None] = mapped_column(String)
     bssid: Mapped[str | None] = mapped_column(String)  # AP MAC — a change means roaming
     freq: Mapped[int | None] = mapped_column(Integer)
+    width_mhz: Mapped[int | None] = mapped_column(Integer)  # 20/40/80/160 — wider = more contention
     signal_dbm: Mapped[float | None] = mapped_column(Float)
     noise_dbm: Mapped[float | None] = mapped_column(Float)
+    airtime_busy_pct: Mapped[float | None] = mapped_column(Float)  # channel occupancy from survey
+    airtime_foreign_pct: Mapped[float | None] = mapped_column(Float)  # busy minus our own rx/tx
     tx_bitrate: Mapped[float | None] = mapped_column(Float)
     rx_bitrate: Mapped[float | None] = mapped_column(Float)
     tx_packets: Mapped[int | None] = mapped_column(Integer)  # cumulative; for retry-rate ratios

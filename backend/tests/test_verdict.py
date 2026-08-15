@@ -1,5 +1,44 @@
+from netpulse.analysis.local_attribution import LocalVerdict
+from netpulse.analysis.topology import TopologyVerdict
 from netpulse.analysis.verdict import WindowStats, conclude
 from netpulse.analysis.wifi_channel import ChannelAdvice
+
+
+def _topo(**kw: object) -> TopologyVerdict:
+    base = dict(
+        ap_count=1, is_mesh=False, double_nat=False, cgnat=False, stuck_on_far_ap=False,
+        wired=False, leading_private_hops=1, problems=[],
+    )
+    base.update(kw)
+    return TopologyVerdict(**base)  # type: ignore[arg-type]
+
+
+def test_bufferbloat_on_wifi_points_at_airtime() -> None:
+    v = conclude(WindowStats(
+        loss=0, latency=25, jitter=5, bufferbloat=92, availability=100,
+        local_attribution=LocalVerdict("local", 40.0, 45.0, 0.0, 0.0),
+        topology=_topo(wired=False), window_label="in the last 24h",
+    ))
+    bb = next(f for f in v.findings if f.title == "Bufferbloat under load")
+    assert "airtime" in bb.detail
+
+
+def test_bufferbloat_when_wired_points_at_the_cpe() -> None:
+    v = conclude(WindowStats(
+        loss=0, latency=25, jitter=2, bufferbloat=92, availability=100,
+        topology=_topo(wired=True), window_label="in the last 24h",
+    ))
+    bb = next(f for f in v.findings if f.title == "Bufferbloat under load")
+    assert "CPE" in bb.detail or "SQM" in bb.detail
+
+
+def test_double_nat_is_flagged_as_a_finding() -> None:
+    v = conclude(WindowStats(
+        loss=0, latency=25, jitter=2, bufferbloat=4, availability=100,
+        topology=_topo(double_nat=True, leading_private_hops=2, problems=["double-nat"]),
+        window_label="in the last 24h",
+    ))
+    assert any(f.title == "Double-NAT detected" for f in v.findings)
 
 
 def test_healthy_window_reports_ok() -> None:

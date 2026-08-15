@@ -30,6 +30,9 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str, bool], ...] = (
     *((t, "network_id", "INTEGER", True) for t in _NETWORK_SCOPED_TABLES),
     ("wifi_raw", "tx_packets", "INTEGER", False),
     ("wifi_raw", "power_save", "BOOLEAN", False),
+    ("wifi_raw", "width_mhz", "INTEGER", False),
+    ("wifi_raw", "airtime_busy_pct", "REAL", False),
+    ("wifi_raw", "airtime_foreign_pct", "REAL", False),
     ("ping_raw", "af", "TEXT NOT NULL DEFAULT '4'", False),  # backfill historical rows as IPv4
 )
 

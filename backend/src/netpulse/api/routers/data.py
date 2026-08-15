@@ -30,6 +30,7 @@ from netpulse.api.schemas import (
     GeoResponse,
     HopTimeline,
     NetworkOut,
+    NetworkVerdictOut,
     ScoreOut,
     SeriesResponse,
     ServiceQualityOut,
@@ -106,6 +107,11 @@ def get_status(
 @router.get("/networks", response_model=list[NetworkOut])
 def get_networks(session: Db) -> list[NetworkOut]:
     return queries.networks(session)
+
+
+@router.get("/networks/verdicts", response_model=list[NetworkVerdictOut])
+def get_network_verdicts(session: Db) -> list[NetworkVerdictOut]:
+    return queries.network_verdicts(session)
 
 
 @router.get("/geo", response_model=GeoResponse)

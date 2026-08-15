@@ -44,6 +44,7 @@ from netpulse.probes import (
     dns,
     flow_quality,
     flows,
+    lan_census,
     media,
     network,
     ping,
@@ -78,6 +79,7 @@ class Collector:
         self.scheduler = AsyncIOScheduler()
         self._last_bssid: str | None = None
         self._network_id: int | None = None
+        self._gateway_ip: str | None = None  # current network's real gateway, pinged as the LAN hop
         self._outage_streak = 0
 
     async def start(self) -> None:
@@ -112,6 +114,7 @@ class Collector:
         add(self._guard(self._media), "interval", seconds=iv.media)
         add(self._guard(self._traceroute), "interval", seconds=iv.traceroute)
         add(self._guard(self._wifi_scan), "interval", seconds=iv.wifi_scan)
+        add(self._guard(self._lan_census), "interval", seconds=iv.wifi_scan)
         add(self._guard(self._public_ip), "interval", seconds=iv.public_ip)
         add(self._guard(self._anycast), "interval", seconds=iv.anycast)
         add(self._guard(self._regional_baseline), "interval", seconds=iv.regional)
@@ -133,11 +136,18 @@ class Collector:
 
     # --- probe jobs --------------------------------------------------------
 
+    def _ping_hosts(self) -> list[str]:
+        """Internet/site/work targets from config + the CURRENT network's real gateway as the LAN
+        hop. Static `lan` targets are dropped: the gateway differs per network, so a hardcoded one
+        is dead everywhere but its home network — the detected gateway replaces it."""
+        hosts = [t.host for t in self.config.targets if t.kind != "lan"]
+        if self._gateway_ip and self._gateway_ip not in hosts:
+            hosts.append(self._gateway_ip)
+        return hosts
+
     async def _ping(self) -> None:
         now = time.time()
-        results = await asyncio.gather(
-            *(ping.sample(now, t.host) for t in self.config.targets)
-        )
+        results = await asyncio.gather(*(ping.sample(now, h) for h in self._ping_hosts()))
         self._stamp(results)
         with _session() as s:
             s.add_all(results)
@@ -229,6 +239,13 @@ class Collector:
                     continue
                 self._track_ip_change(s, family, value)
             s.commit()
+
+    async def _lan_census(self) -> None:
+        count = await lan_census.sample(self._gateway_ip)
+        if count is not None:
+            with _session() as s:
+                self._upsert_state(s, "lan_device_count", str(count))
+                s.commit()
 
     async def _regional_baseline(self) -> None:
         country = self._client_country()  # the PC roams — compare against wherever it actually is
@@ -349,13 +366,13 @@ class Collector:
     def _detect_outage(self, s: Session, now: float, results: list) -> None:  # type: ignore[type-arg]
         by_host = {r.target: r for r in results}
         internet = [t for t in self.config.targets if t.kind in ("internet", "site", "work")]
-        gateway = [t for t in self.config.targets if t.kind == "lan"]
         down = bool(internet) and all(by_host[t.host].loss_pct >= 100 for t in internet)
         # Require several consecutive failing cycles so one Wi-Fi hiccup doesn't flap an outage.
         self._outage_streak = self._outage_streak + 1 if down else 0
         open_event = _open_event(s, "outage")
         if self._outage_streak >= _OUTAGE_CYCLES and open_event is None:
-            gw_down = any(by_host[t.host].loss_pct >= 100 for t in gateway)
+            gw = by_host.get(self._gateway_ip) if self._gateway_ip else None
+            gw_down = gw is not None and gw.loss_pct >= 100
             cause = "wifi/lan" if gw_down else "isp"
             s.add(Event(ts=now, end_ts=None, kind="outage", severity="error", detail=cause,
                         network_id=self._network_id))
@@ -409,6 +426,7 @@ class Collector:
         fp = await network.detect()
         if fp is None:
             return  # no default route = offline; keep the last known network
+        self._gateway_ip = fp.gateway_ip
         now = time.time()
         with _session() as s:
             net = s.scalars(select(Network).where(Network.key == fp.key)).first()

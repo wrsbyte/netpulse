@@ -21,6 +21,7 @@ from netpulse.analysis.attribute import HopStat, attribute
 from netpulse.analysis.diurnal import distinct_days, hourly_cells
 from netpulse.analysis.experience import ExperienceInputs, assess
 from netpulse.analysis.geo import locate_colo, locate_country
+from netpulse.analysis.local_attribution import LocalVerdict, attribute_local
 from netpulse.analysis.segment import classify as segment_classify
 from netpulse.analysis.sla import Measured as SlaMeasured
 from netpulse.analysis.sla import SlaTargets
@@ -33,8 +34,9 @@ from netpulse.analysis.stats import (
     robust_z,
     spearman,
 )
-from netpulse.analysis.verdict import WindowStats
-from netpulse.analysis.wifi_channel import ChannelAdvice
+from netpulse.analysis.topology import TopologyVerdict, analyze_topology
+from netpulse.analysis.verdict import WindowStats, conclude
+from netpulse.analysis.wifi_channel import ChannelAdvice, ssid_root
 from netpulse.analysis.wifi_channel import analyze as analyze_channel
 from netpulse.analysis.wifi_channel import continuous_hours as channel_continuous_hours
 from netpulse.api.schemas import (
@@ -57,6 +59,7 @@ from netpulse.api.schemas import (
     HopTimeline,
     MetricOut,
     NetworkOut,
+    NetworkVerdictOut,
     Point,
     Series,
     SeriesResponse,
@@ -93,6 +96,7 @@ _COVERAGE_MAX_GAP = 60.0  # s between pings above which the collector was down (
 _SCAN_GUARD = 4.0  # s around a WiFi scan whose ping samples are radio-off-channel artifacts
 _SPEEDTEST_BEFORE = 2  # s before a speedtest ts to start excluding
 _SPEEDTEST_AFTER = 25  # s after the ts (test runs from its start ts; RTT recovers by ~+17 s)
+_MIN_CYCLES_TO_GRADE = 30  # ping cycles below which a network is "insufficient data", not a grade
 
 
 def _scope(
@@ -221,6 +225,41 @@ def networks(session: Session) -> list[NetworkOut]:
         )
         for n in rows
     ]
+
+
+def _network_action(stats: WindowStats) -> tuple[str, str | None, list[str]]:
+    """Resolve a network to one action class: reconfigure your side, report to the ISP, or ok.
+    Returns (action, bottleneck_layer, problems)."""
+    if stats.insufficient_data:
+        return "insufficient", None, []
+    layer = stats.local_attribution.layer if stats.local_attribution else None
+    problems = list(stats.topology.problems) if stats.topology else []
+    if stats.channel_advice and stats.channel_advice.crowded:
+        problems.append("wifi-channel")
+    if layer == "local":
+        problems.append("wifi-jitter")
+    if problems:
+        return "user-config", layer, problems
+    if layer == "access":
+        return "ISP-report", layer, problems
+    return "ok", layer, problems
+
+
+def network_verdicts(session: Session) -> list[NetworkVerdictOut]:
+    """Every network the PC has seen, each graded with its bottleneck layer and the single action —
+    reconfigure your side or report to the ISP. The 'all networks' surface, not device-centric."""
+    current = current_network_id(session)
+    out: list[NetworkVerdictOut] = []
+    for n in session.scalars(select(Network).order_by(Network.last_seen.desc())).all():
+        stats = gather_stats(session, 24 * 3600, "in the last 24h", network_id=n.id)
+        verdict = conclude(stats)
+        action, layer, problems = _network_action(stats)
+        out.append(NetworkVerdictOut(
+            id=n.id, label=n.label, is_current=n.id == current,
+            grade=verdict.score.grade, insufficient=stats.insufficient_data,
+            headline=verdict.headline, bottleneck_layer=layer, action=action, problems=problems,
+        ))
+    return out
 
 
 def geo_map(session: Session, network_id: int | None) -> GeoResponse:
@@ -855,6 +894,85 @@ def _loss_retry_corr(
     return spearman(xs, ys)
 
 
+def _local_attribution(
+    session: Session, e2e_pings: Sequence[PingRaw], e2e_loss: float | None,
+    start: float, network_id: int | None,
+) -> LocalVerdict | None:
+    """First-hop (gateway) vs end-to-end RTT spread + loss: is the instability local (WiFi/LAN) or
+    past the gateway (access/ISP)? Needs a concrete network — the gateway is per-network."""
+    if network_id is None:
+        return None
+    net = session.get(Network, network_id)
+    gw_ip = net.gateway_ip if net else None
+    if not gw_ip:
+        return None
+    gw = session.scalars(
+        select(PingRaw).where(
+            PingRaw.ts >= start, PingRaw.target == gw_ip, *_scope(PingRaw.network_id, network_id)
+        )
+    ).all()
+    gw_rtts = [p.rtt_avg for p in gw if p.rtt_avg is not None]
+    if not gw_rtts:
+        return None
+    # Per-target spread, then the BEST path — pooling targets would inflate "jitter" with the
+    # baseline gap between a near (Google ~15 ms) and a far (Cloudflare/LAX ~60 ms) host, which is
+    # distance, not jitter. If even the steadiest internet path swings as much as the gateway, the
+    # variance is the shared first hop (WiFi); if it swings much more, the path adds it (ISP).
+    by_target: dict[str, list[float]] = {}
+    for p in e2e_pings:
+        if p.rtt_avg is not None:
+            by_target.setdefault(p.target, []).append(p.rtt_avg)
+    spreads = [percentile(v, 95) - percentile(v, 50) for v in by_target.values() if len(v) >= 10]
+    if not spreads:
+        return None
+    gw_jitter = percentile(gw_rtts, 95) - percentile(gw_rtts, 50)
+    gw_loss = sum(p.loss_pct for p in gw) / len(gw)
+    return attribute_local(gw_jitter, min(spreads), gw_loss, e2e_loss)
+
+
+def _topology(
+    session: Session, latest_wifi: WifiRaw | None, start: float, network_id: int | None
+) -> TopologyVerdict | None:
+    """Infer the network architecture: leading private hops (double-NAT), CGNAT public IP, and
+    same-SSID APs in the scan (mesh / a stronger AP you should be on). Per-network only."""
+    if network_id is None:
+        return None
+    target = next((t.host for t in get_config().targets if t.kind == "internet"), None)
+    hop_hosts: list[str | None] = []
+    if target:
+        latest_ts = session.scalar(
+            select(func.max(Traceroute.ts)).where(
+                Traceroute.target == target, *_scope(Traceroute.network_id, network_id)
+            )
+        )
+        if latest_ts is not None:
+            hop_hosts = list(session.scalars(
+                select(Traceroute.host)
+                .where(
+                    Traceroute.target == target, Traceroute.ts == latest_ts,
+                    *_scope(Traceroute.network_id, network_id),
+                )
+                .order_by(Traceroute.hop)
+            ).all())
+    pub = session.get(State, "public_ipv4")
+    scans = session.scalars(
+        select(WifiScan).where(
+            WifiScan.ts >= max(start, time.time() - 1800), *_scope(WifiScan.network_id, network_id)
+        )
+    ).all()
+    if not hop_hosts and not scans:
+        return None
+    scan = [(sc.ssid, sc.bssid, sc.signal_dbm) for sc in scans]
+    wired = latest_wifi is None or latest_wifi.freq is None
+    lan = session.get(State, "lan_device_count")
+    lan_devices = int(lan.value) if lan else None
+    return analyze_topology(
+        hop_hosts, pub.value if pub else None,
+        latest_wifi.ssid if latest_wifi else None, latest_wifi.bssid if latest_wifi else None,
+        latest_wifi.signal_dbm if latest_wifi else None, scan, wired=wired, lan_devices=lan_devices,
+    )
+
+
 def gather_stats(
     session: Session, window: int, window_label: str, network_id: int | None = None
 ) -> WindowStats:
@@ -882,6 +1000,7 @@ def gather_stats(
 
     latency_p95, latency_excess = _latency_stats(pings)
     latency_anomaly_z = _latency_anomaly(session, pings, network_id)
+    local_attribution = _local_attribution(session, pings, typical_loss, start, network_id)
     ipv6_broken = _ipv6_broken(session, start, network_id, v4_ok=bool(pings))
 
     outages = session.scalars(
@@ -889,6 +1008,11 @@ def gather_stats(
             Event.kind == "outage", Event.ts >= start, *_scope(Event.network_id, network_id)
         )
     ).all()
+    roam_count = session.scalar(
+        select(func.count()).select_from(Event).where(
+            Event.kind == "roam", Event.ts >= start, *_scope(Event.network_id, network_id)
+        )
+    ) or 0
     downtime = _downtime(outages, start, now)
     worst_outage = max(((o.end_ts or now) - o.ts for o in outages), default=None)
     worst_cause = max(outages, key=lambda o: (o.end_ts or now) - o.ts).detail if outages else None
@@ -905,6 +1029,7 @@ def gather_stats(
     latest_wifi = wifi[-1] if wifi else None
     power_save = latest_wifi.power_save if latest_wifi else None
     channel_advice = _channel_advice(session, latest_wifi, start, network_id)
+    topology = _topology(session, latest_wifi, start, network_id)
     channel_series = [(w.ts, _freq_to_channel(w.freq)) for w in wifi]
     current_channel = _freq_to_channel(latest_wifi.freq) if latest_wifi else None
     hours_on_channel = channel_continuous_hours(channel_series, current_channel)
@@ -973,6 +1098,9 @@ def gather_stats(
         dns_total=len(dns),
         ipv6_broken=ipv6_broken,
         attribution=attribution,
+        local_attribution=local_attribution,
+        topology=topology,
+        roam_count=roam_count,
         segment=segment,
         loss_retry_corr=corr,
         anycast_out=anycast_out,
@@ -980,6 +1108,7 @@ def gather_stats(
         regional_user_rtt=regional_user_rtt,
         bgp_updates=bgp_updates,
         bgp_stable=bgp_stable,
+        insufficient_data=len({p.ts for p in pings}) < _MIN_CYCLES_TO_GRADE,
         window_label=window_label,
     )
 
@@ -1035,21 +1164,23 @@ def _latency_anomaly(
     for p in pings:
         if p.rtt_avg is not None:
             by_target.setdefault(p.target, []).append(p.rtt_avg)
-    zs: list[float] = []
-    for target, rtts in by_target.items():
-        baseline = [
-            p95
-            for p95 in session.scalars(
-                select(Agg.p95).where(
-                    Agg.metric == "ping.rtt_avg", Agg.resolution == "1h", Agg.tag == target,
-                    Agg.p95.is_not(None), *_scope(Agg.network_id, network_id),
-                )
-            ).all()
-            if p95 is not None
-        ]
-        z = robust_z(percentile(rtts, 95), baseline)
-        if z is not None:
-            zs.append(z)
+    if not by_target:
+        return None
+    # One query for all targets' baselines (was one per target), grouped in Python by tag.
+    baselines: dict[str, list[float]] = {}
+    for tag, p95 in session.execute(
+        select(Agg.tag, Agg.p95).where(
+            Agg.metric == "ping.rtt_avg", Agg.resolution == "1h", Agg.tag.in_(by_target),
+            Agg.p95.is_not(None), *_scope(Agg.network_id, network_id),
+        )
+    ).all():
+        if p95 is not None:
+            baselines.setdefault(tag, []).append(p95)
+    zs = [
+        z
+        for target, rtts in by_target.items()
+        if (z := robust_z(percentile(rtts, 95), baselines.get(target, []))) is not None
+    ]
     return max(zs) if zs else None
 
 
@@ -1141,13 +1272,18 @@ def _channel_advice(
     if not scans:
         return None
     own_bssid = latest_wifi.bssid if latest_wifi else None
-    by_channel: dict[int, set[str | None]] = {}
+    own_root = ssid_root(latest_wifi.ssid) if latest_wifi else None
+    # Strongest observation per neighbour BSSID; drop our own AP and our router's other-band radios
+    # (same SSID root), which otherwise inflate our own block as if it were a competitor.
+    strongest: dict[str | None, tuple[int, float]] = {}
     for sc in scans:
-        if sc.bssid == own_bssid:  # don't count our own AP as congestion in our own block
+        if sc.bssid == own_bssid or (own_root and ssid_root(sc.ssid) == own_root):
             continue
-        by_channel.setdefault(sc.channel, set()).add(sc.bssid)
-    channels = [ch for ch, bssids in by_channel.items() for _ in bssids]
-    return analyze_channel(current, channels)
+        prev = strongest.get(sc.bssid)
+        if prev is None or sc.signal_dbm > prev[1]:
+            strongest[sc.bssid] = (sc.channel, sc.signal_dbm)
+    width = latest_wifi.width_mhz if latest_wifi else None
+    return analyze_channel(current, list(strongest.values()), width)
 
 
 def _client_initiated_outages(

@@ -66,6 +66,18 @@ class NetworkOut(BaseModel):
     is_current: bool
 
 
+class NetworkVerdictOut(BaseModel):
+    id: int
+    label: str | None
+    is_current: bool
+    grade: str
+    insufficient: bool
+    headline: str
+    bottleneck_layer: str | None  # "local" (WiFi/LAN) | "access" (ISP) | None
+    action: str  # "user-config" | "ISP-report" | "ok" | "insufficient"
+    problems: list[str]
+
+
 class ScoreOut(BaseModel):
     score: float
     grade: str

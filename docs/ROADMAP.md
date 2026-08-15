@@ -104,6 +104,15 @@ their samples mix and every conclusion is wrong when you move. This underpins A 
 - **N4** **Per-network views & verdict**: a network selector (default = current) so the
   dashboard, tables, score and verdict are all scoped to one network — or "all". *(M)*
 - **N5** Cross-network comparison ("Home vs Office: which is worse, and how"). *(M)*
+- **N6** ✅ **Local-medium & LAN-vs-WAN attribution + per-network config-vs-report verdict + network
+  architecture.** The engine now tells "your WiFi" from "your ISP" unattended and infers the
+  architecture. Shipped (see
+  [plans/local-network-measurement-coverage.md](plans/local-network-measurement-coverage.md)):
+  dynamic per-network gateway target (G1), first-hop-vs-e2e attribution (G2, per-target best path),
+  airtime%/channel width (G3/G4), signal/own-router/width-aware channel advice (G10–G12),
+  multi-network verdict `GET /api/networks/verdicts` (G5), insufficient-data gate (G6), topology
+  inference — double-NAT/CGNAT/mesh/stuck-AP (G13), LAN census (G7), roaming (G8), bufferbloat-layer
+  (G9). 149 tests, deployed.
 
 ### B. Data science & scientific rigor (P0/P1)
 
