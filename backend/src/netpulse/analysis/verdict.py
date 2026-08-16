@@ -32,7 +32,7 @@ _LAYER_LABEL = {
 
 @dataclass(frozen=True, slots=True)
 class WindowStats:
-    loss: float | None = None  # TYPICAL path average % loss (median across targets) — grade input
+    loss: float | None = None  # grade input: forward-path (TCP) loss if available, else ICMP avg
     typical_loss: float | None = None  # median across targets of each target's average loss
     loss_ci: tuple[float, float] | None = None  # block-bootstrap 95% CI on worst-path loss
     loss_burst_len: float | None = None  # mean consecutive lossy cycles (bursty vs uniform)

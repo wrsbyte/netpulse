@@ -83,6 +83,7 @@ from netpulse.db.models import (
     PingRaw,
     RegionalBaseline,
     State,
+    TcpConnect,
     ThroughputRaw,
     Traceroute,
     WifiRaw,
@@ -97,12 +98,37 @@ _SCAN_GUARD = 4.0  # s around a WiFi scan whose ping samples are radio-off-chann
 _SPEEDTEST_BEFORE = 2  # s before a speedtest ts to start excluding
 _SPEEDTEST_AFTER = 25  # s after the ts (test runs from its start ts; RTT recovers by ~+17 s)
 _MIN_CYCLES_TO_GRADE = 30  # ping cycles below which a network is "insufficient data", not a grade
+_MIN_TCP_ATTEMPTS = 10  # TCP handshakes below which forward-loss isn't trusted → fall back to ICMP
 
 
 def _scope(
     column: InstrumentedAttribute[int | None], network_id: int | None
 ) -> list[ColumnElement[bool]]:
     return [column == network_id] if network_id is not None else []
+
+
+def _forward_loss(session: Session, start: float, network_id: int | None) -> float | None:
+    """Forward-path loss proxy from TCP handshakes to the internet resolvers — the loss the user's
+    REAL traffic sees, and the grade input. Unlike ICMP (which routers rate-limit/deprioritize, so
+    it over-reports "loss" that never touches TCP/QUIC), a SYN rides the forwarding plane. `refused`
+    means the host answered (port closed) → reachable, not loss, so it's excluded; `filtered`
+    (timeout/unreachable) is the real loss. Returns None when there are too few handshakes to trust,
+    so the grade falls back to the ICMP average."""
+    internet = {t.host for t in get_config().targets if t.kind == "internet"}
+    if not internet:
+        return None
+    rows = session.scalars(
+        select(TcpConnect).where(
+            TcpConnect.ts >= start,
+            TcpConnect.target.in_(internet),
+            *_scope(TcpConnect.network_id, network_id),
+        )
+    ).all()
+    attempts = [r for r in rows if r.status in ("ok", "filtered")]
+    if len(attempts) < _MIN_TCP_ATTEMPTS:
+        return None
+    failed = sum(1 for r in attempts if r.status == "filtered")
+    return 100.0 * failed / len(attempts)
 
 
 def _internet_hosts() -> set[str]:
@@ -997,6 +1023,10 @@ def gather_stats(
     for p in pings:
         per_target.setdefault(p.target, []).append(p.loss_pct)
     worst_target, typical_loss, loss_ci, loss_burst = _loss_stats(per_target)
+    # The GRADE is fed forward-path (TCP) loss — what real traffic sees — not the ICMP average,
+    # which routers rate-limit into phantom loss. ICMP `typical_loss` is still reported in findings.
+    forward_loss = _forward_loss(session, start, network_id)
+    grade_loss = forward_loss if forward_loss is not None else typical_loss
 
     latency_p95, latency_excess = _latency_stats(pings)
     latency_anomaly_z = _latency_anomaly(session, pings, network_id)
@@ -1072,7 +1102,7 @@ def gather_stats(
     segment = segment_classify(min(medians), max(medians)) if medians else None
 
     return WindowStats(
-        loss=typical_loss,
+        loss=grade_loss,
         typical_loss=typical_loss,
         loss_ci=loss_ci,
         loss_burst_len=loss_burst,

@@ -3,12 +3,17 @@ from pathlib import Path
 
 from netpulse.analysis.verdict import conclude
 from netpulse.api import queries
-from netpulse.db.models import Network, PingRaw
+from netpulse.db.models import Network, PingRaw, TcpConnect
 from netpulse.db.session import get_session, init_engine
 
 
 def _ping(ts: float, target: str, rtt: float, loss: float = 0.0) -> PingRaw:
     return PingRaw(ts=ts, target=target, loss_pct=loss, rtt_avg=rtt, rtt_min=rtt - 1, jitter=1.0)
+
+
+def _tcp(ts: float, target: str, status: str) -> TcpConnect:
+    ms = 20.0 if status == "ok" else None
+    return TcpConnect(ts=ts, target=target, port=443, connect_ms=ms, status=status)
 
 
 def test_local_attribution_uses_best_path_not_pooled(tmp_path: Path) -> None:
@@ -80,3 +85,44 @@ def test_grade_loss_is_average_not_p95_of_quantized_loss(tmp_path: Path) -> None
         stats = queries.gather_stats(s, window=6 * 3600, window_label="", network_id=None)
     assert stats.loss is not None and stats.loss < 5  # the average, not the ~33% p95
     assert conclude(stats).score.grade != "F"
+
+
+def test_grade_ignores_icmp_loss_when_tcp_forward_path_is_clean(tmp_path: Path) -> None:
+    # ICMP reports heavy loss (rate-limiting), but every TCP handshake succeeds → the real forward
+    # path is clean, so the grade must NOT be dragged to F by the ICMP artifact. The ICMP figure is
+    # still reported as typical_loss for findings.
+    init_engine(tmp_path / "gs_fl_ok.db")
+    now = time.time()
+    with get_session() as s:
+        for i in range(60):
+            t = now - i * 3
+            s.add(_ping(t, "1.1.1.1", 48.0, loss=20.0))  # ICMP rate-limit "loss"
+            s.add(_ping(t, "9.9.9.9", 16.0, loss=0.0))
+        for i in range(30):  # TCP handshakes all succeed → forward loss 0
+            t = now - i * 15
+            s.add_all([_tcp(t, "1.1.1.1", "ok"), _tcp(t, "9.9.9.9", "ok")])
+        s.commit()
+    with get_session() as s:
+        stats = queries.gather_stats(s, window=6 * 3600, window_label="", network_id=None)
+    assert stats.typical_loss is not None and stats.typical_loss >= 5  # ICMP still surfaced
+    assert stats.loss is not None and stats.loss < 2  # grade uses the clean TCP forward path
+    assert conclude(stats).score.grade != "F"
+
+
+def test_grade_drops_when_tcp_forward_path_really_fails(tmp_path: Path) -> None:
+    # Genuine forward-path loss: a fifth of TCP handshakes time out. That IS real, so the grade
+    # must reflect it (not be excused as an ICMP artifact).
+    init_engine(tmp_path / "gs_fl_bad.db")
+    now = time.time()
+    with get_session() as s:
+        for i in range(60):
+            s.add(_ping(now - i * 3, "1.1.1.1", 48.0, loss=0.0))  # ICMP looks clean here
+        for i in range(40):
+            t = now - i * 15
+            status = "filtered" if i % 5 == 0 else "ok"  # ~20% real forward loss
+            s.add(_tcp(t, "1.1.1.1", status))
+        s.commit()
+    with get_session() as s:
+        stats = queries.gather_stats(s, window=6 * 3600, window_label="", network_id=None)
+    assert stats.loss is not None and stats.loss >= 15  # forward loss surfaced to the grade
+    assert conclude(stats).score.grade == "F"
