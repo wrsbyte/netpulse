@@ -24,9 +24,10 @@ async def sample(ts: float, _iface: str) -> MediaRaw | None:
         return None
     remote_ip, endpoints = max(counts.items(), key=lambda kv: kv[1])
     pinged = await ping.sample(ts, remote_ip)
-    # Media servers routinely filter/rate-limit ICMP: a failed ping means "no signal", NOT 100 %
-    # media loss. Trusting it would flag a perfectly good call as degraded (the ICMP-filter trap).
-    if pinged.rtt_avg is None:
+    # Media servers routinely filter/rate-limit ICMP: a failed ping (or a measurement gap) means
+    # "no signal", NOT 100 % media loss. Trusting it would flag a good call as degraded (the
+    # ICMP-filter trap).
+    if pinged is None or pinged.rtt_avg is None:
         return None
     rdns = await _rdns(remote_ip)
     return MediaRaw(

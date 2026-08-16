@@ -147,7 +147,10 @@ class Collector:
 
     async def _ping(self) -> None:
         now = time.time()
-        results = await asyncio.gather(*(ping.sample(now, h) for h in self._ping_hosts()))
+        sampled = await asyncio.gather(*(ping.sample(now, h) for h in self._ping_hosts()))
+        results = [r for r in sampled if r is not None]  # drop instrument gaps (see ping.sample)
+        if not results:
+            return
         self._stamp(results)
         with _session() as s:
             s.add_all(results)
@@ -259,7 +262,7 @@ class Collector:
                 ts=now, source="ripe_atlas", target=ripe_atlas.K_ROOT_IP, country=country,
                 metric="rtt_ms", values_json=json.dumps(rtts), n=len(rtts),
             ))
-            if user.rtt_avg is not None:
+            if user is not None and user.rtt_avg is not None:
                 self._upsert_state(s, "kroot_rtt", str(user.rtt_avg))
             public = s.get(State, "public_ipv4")
             if public is not None:
@@ -366,7 +369,11 @@ class Collector:
     def _detect_outage(self, s: Session, now: float, results: list) -> None:  # type: ignore[type-arg]
         by_host = {r.target: r for r in results}
         internet = [t for t in self.config.targets if t.kind in ("internet", "site", "work")]
-        down = bool(internet) and all(by_host[t.host].loss_pct >= 100 for t in internet)
+        # A target missing from this cycle (an instrument gap) is UNKNOWN, not down — only declare
+        # an outage when every internet target is present AND confirmed at 100 % loss.
+        down = bool(internet) and all(
+            (r := by_host.get(t.host)) is not None and r.loss_pct >= 100 for t in internet
+        )
         # Require several consecutive failing cycles so one Wi-Fi hiccup doesn't flap an outage.
         self._outage_streak = self._outage_streak + 1 if down else 0
         open_event = _open_event(s, "outage")

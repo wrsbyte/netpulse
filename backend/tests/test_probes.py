@@ -19,6 +19,21 @@ PING_LOSS = """PING 9.9.9.9 (9.9.9.9) 56(84) bytes of data.
 4 packets transmitted, 0 received, 100% packet loss, time 3050ms
 """
 
+# A single dropped packet in a small burst — usually ICMP rate-limiting, not real path loss. The
+# loss must come from the transmitted/received counts, not be trusted blindly from the printed "%".
+PING_PARTIAL = """PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+
+--- 1.1.1.1 ping statistics ---
+5 packets transmitted, 4 received, 20% packet loss, time 812ms
+rtt min/avg/max/mdev = 47.0/48.0/49.0/0.7 ms
+"""
+
+# BusyBox / some builds print "N packets received" (extra word).
+PING_BUSYBOX = """--- 1.1.1.1 ping statistics ---
+10 packets transmitted, 9 packets received, 10% packet loss
+rtt min/avg/max/mdev = 47.0/48.0/49.0/0.7 ms
+"""
+
 DIG_OK = """;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1
 ;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
 ;; Query time: 12 msec
@@ -46,8 +61,32 @@ async def test_ping_parse_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_ping_parse_full_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shell, "run", lambda *a, **k: _async(_result(PING_LOSS)))
     row = await ping.sample(100.0, "9.9.9.9")
+    assert row is not None
     assert row.loss_pct == 100.0
     assert row.rtt_avg is None
+
+
+async def test_ping_loss_from_counts_not_printed_pct(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Loss is derived from transmitted/received, so it is correct for any packet count."""
+    monkeypatch.setattr(shell, "run", lambda *a, **k: _async(_result(PING_PARTIAL)))
+    row = await ping.sample(100.0, "1.1.1.1")
+    assert row is not None
+    assert row.loss_pct == 20.0  # (5 - 4) / 5
+    assert row.rtt_avg == 48.0
+
+
+async def test_ping_parse_busybox_received_word(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shell, "run", lambda *a, **k: _async(_result(PING_BUSYBOX)))
+    row = await ping.sample(100.0, "1.1.1.1")
+    assert row is not None
+    assert row.loss_pct == 10.0  # (10 - 9) / 10
+
+
+async def test_ping_instrument_gap_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No summary line (tool missing / killed / garbled) is a measurement gap, NOT a 100%-loss
+    outage. Fabricating 100% here manufactured false outages."""
+    monkeypatch.setattr(shell, "run", lambda *a, **k: _async(_result("", ok=False)))
+    assert await ping.sample(100.0, "1.1.1.1") is None
 
 
 async def test_dns_ok(monkeypatch: pytest.MonkeyPatch) -> None:
