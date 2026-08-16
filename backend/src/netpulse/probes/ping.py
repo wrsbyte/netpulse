@@ -14,14 +14,17 @@ from netpulse.db.models import PingRaw
 _COUNTS = re.compile(r"(\d+) packets transmitted, (\d+)(?: packets)? received")
 _RTT = re.compile(r"= ([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)")  # min/avg/max/mdev
 
-# 10 packets/cycle: finer loss resolution (10% steps, not 25%) and more RTT samples for jitter,
-# while -i 0.2 -w 3 still finishes within the 3 s ping cadence.
+# 10 packets/cycle: finer loss resolution (10% steps, not 25%) and more RTT samples for jitter.
+# -W 1 (per-reply timeout), NOT -w (overall deadline): a deadline lets ping keep sending past -c
+# whenever a reply is late, so a lossy cycle transmitted 11-15 packets and the loss denominator
+# drifted (1/11 = 9.09% instead of a clean 1/10). -W caps each wait, so exactly _COUNT go out and
+# the sample size (hence the loss %) is deterministic. Completes in ~1.9 s, within the 3 s cadence.
 _COUNT = 10
 
 
 async def sample(ts: float, target: str, af: str = "4") -> PingRaw | None:
     res = await shell.run(
-        "ping", "-n", "-c", str(_COUNT), "-i", "0.2", "-w", "3", target, timeout=6
+        "ping", "-n", "-c", str(_COUNT), "-i", "0.2", "-W", "1", target, timeout=6
     )
     counts = _COUNTS.search(res.stdout)
     if counts is None:
