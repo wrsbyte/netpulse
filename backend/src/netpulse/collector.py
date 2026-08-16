@@ -17,16 +17,19 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable, Iterator
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from netpulse import __version__
 from netpulse.aggregation import run_rollups
 from netpulse.config import NetpulseConfig, Settings, get_config, get_settings
 from netpulse.db.migrate import _NETWORK_SCOPED_TABLES
 from netpulse.db.models import (
     AnycastPop,
+    DataVersion,
     Event,
     FlowQuality,
     HopLocation,
@@ -62,6 +65,7 @@ log = get_logger("collector")
 
 _OUTAGE_CYCLES = 3  # consecutive all-internet-down ping cycles before an outage is declared
 _HOP_GEO_BATCH = 16  # new hop/flow IPs to geolocate per run, gentle on the free RIPEstat endpoint
+_REPO_DIR = Path(__file__).resolve().parents[3]  # resolve at import (not in async — ASYNC240)
 
 
 def _is_public_ip(ip: str) -> bool:
@@ -83,6 +87,7 @@ class Collector:
         self._outage_streak = 0
 
     async def start(self) -> None:
+        await self._record_data_version()  # provenance: which code + commit is producing this data
         if not self.iface:
             self.iface = await _detect_iface()
         await self._sync_network()
@@ -328,6 +333,25 @@ class Collector:
             s.add(State(key=key, value=value))
         else:
             state.value = value
+
+    async def _record_data_version(self) -> None:
+        """Upsert this run's version into the provenance registry with the git SHA, so any window of
+        data is reproducible to an exact source tree (docs/DATA_VERSIONING.md)."""
+        sha = await self._git_sha()
+        with _session() as s:
+            row = s.get(DataVersion, __version__)
+            if row is None:
+                s.add(DataVersion(version=__version__, first_seen_ts=time.time(), git_sha=sha))
+            elif sha and row.git_sha != sha:
+                row.git_sha = sha  # same version rebuilt at a new commit — keep the latest
+            s.commit()
+        log.info("data version", version=__version__, git_sha=sha)
+
+    @staticmethod
+    async def _git_sha() -> str | None:
+        """Short commit of the source tree, best-effort (None outside a git checkout)."""
+        res = await shrun("git", "-C", str(_REPO_DIR), "rev-parse", "--short", "HEAD", timeout=3)
+        return res.stdout.strip() or None if res.ok else None
 
     async def _anycast(self) -> None:
         rows = await anycast.sample(time.time())

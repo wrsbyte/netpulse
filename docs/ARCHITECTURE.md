@@ -36,6 +36,14 @@ row per `(bucket, resolution, metric, tag)` with avg/min/max/p95/n. Operational 
 `event` (discrete incidents, with an `end_ts` for ongoing ones) and `state` (collector
 key/value: last counters, public IP).
 
+### Provenance (which code measured this row)
+
+Every sample carries a `code_version` (on the `NetworkScoped` mixin, stamped by the collector next
+to `network_id`) and the collector records each version + git SHA in a `data_version` registry at
+startup. The package semver is bumped by **data impact**, so a query can trust or exclude rows by
+how they were measured. Full design: [DATA_VERSIONING.md](DATA_VERSIONING.md); per-version trust
+notes: [DATA_VERSIONS.md](DATA_VERSIONS.md).
+
 ### Downsampling & retention
 
 The rollup job (every 5 min) recomputes a bounded recent window idempotently:

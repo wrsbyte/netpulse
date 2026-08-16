@@ -12,6 +12,7 @@ from __future__ import annotations
 from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from netpulse import __version__
 from netpulse.db.base import Base, ts_column
 
 
@@ -33,11 +34,15 @@ class Network(Base):
 
 
 class NetworkScoped:
-    """Mixin: tag a row with the network it was sampled on (nullable for pre-migration rows)."""
+    """Mixin: tag a row with the network it was sampled on (nullable for pre-migration rows) and the
+    code version that measured it. `code_version` defaults to the running package version, so every
+    row is stamped automatically at insert; pre-versioning rows are backfilled to "0.0.0"
+    (provenance unknown). See docs/DATA_VERSIONING.md."""
 
     network_id: Mapped[int | None] = mapped_column(
         ForeignKey("network.id"), index=True, default=None
     )
+    code_version: Mapped[str] = mapped_column(String, default=__version__, index=True)
 
 
 class PingRaw(NetworkScoped, Base):
@@ -274,6 +279,20 @@ class State(Base):
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(String)
+
+
+class DataVersion(Base):
+    """Provenance registry: one row per code version that has ever collected, recording WHEN it
+    began and the exact commit. Upserted by the collector at startup. Maps `code_version` on samples
+    to a source tree and gives the boundary timestamps where the measurement method changed. See
+    docs/DATA_VERSIONING.md."""
+
+    __tablename__ = "data_version"
+
+    version: Mapped[str] = mapped_column(String, primary_key=True)
+    first_seen_ts: Mapped[float] = ts_column()
+    git_sha: Mapped[str | None] = mapped_column(String, default=None)
+    note: Mapped[str | None] = mapped_column(String, default=None)
 
 
 class HopLocation(Base):

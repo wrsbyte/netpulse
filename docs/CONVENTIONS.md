@@ -37,6 +37,35 @@ automated ones.
 - Theme colors come from Tailwind `@theme` tokens (`text-ink`, `bg-panel`, …); avoid ad-hoc
   hex except inside chart option builders.
 
+## Data versioning (provenance & trust)
+
+netpulse is a **measurement instrument**: its real public contract is the *dataset*, not an API.
+So the package **semver in `backend/pyproject.toml`** (surfaced as `netpulse.__version__`) is
+governed by **data impact, not code-API impact**, and **every collected sample stores the version
+that produced it** (`code_version`). This is how we know which rows to trust and never silently pool
+data measured two different ways. (This convention exists because a probe once changed `ping -c`
+without a version bump: stored loss quantized as 1/5 while the code said 1/4 — the data was no longer
+reproducible from the method. Full design & process: [DATA_VERSIONING.md](DATA_VERSIONING.md).)
+
+**Bump the version in the SAME commit as the change**, by data impact:
+
+- **MAJOR** (`X.0.0`) — a metric's **meaning/unit/schema breaks**; old and new rows are
+  *incomparable*. Never pool the affected metric across a major boundary.
+- **MINOR** (`0.X.0`) — the **measurement method changed so values step**, but the metric still
+  means the same thing (e.g. `ping -c 4→10`, loss now count-based, grade on TCP not ICMP); **or** a
+  new metric/probe is added. Compare across a minor boundary only with the step in mind.
+- **PATCH** (`0.0.X`) — **no effect on collected values**: refactor, crash fix, docs, or a fix that
+  only stops *garbage* rows (fabricated outages) without shifting valid ones.
+
+**Maintenance, every time you bump:**
+1. Edit `__version__` in `backend/src/netpulse/__init__.py` (the single source; `pyproject.toml`
+   reads it dynamically).
+2. Add an entry to [DATA_VERSIONS.md](DATA_VERSIONS.md): version, date, what changed, and the
+   **trust note** (what not to compare across the boundary, and why).
+3. If it adds/changes a column, extend `db/migrate.py` (idempotent, backfilled) — see TDD below.
+4. Stamping is automatic (the `code_version` column defaults to `__version__`); the collector also
+   records the version + git SHA in the `data_version` registry at startup. Nothing else to wire.
+
 ## TDD — the working rule
 
 **Every fix starts with a failing test.** Reproduce the bug as a red test, then make it green.
