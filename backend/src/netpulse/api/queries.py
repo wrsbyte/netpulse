@@ -73,6 +73,7 @@ from netpulse.db.models import (
     ActiveTest,
     Agg,
     AnycastPop,
+    DataVersion,
     DnsRaw,
     Event,
     Flow,
@@ -99,12 +100,41 @@ _SPEEDTEST_BEFORE = 2  # s before a speedtest ts to start excluding
 _SPEEDTEST_AFTER = 25  # s after the ts (test runs from its start ts; RTT recovers by ~+17 s)
 _MIN_CYCLES_TO_GRADE = 30  # ping cycles below which a network is "insufficient data", not a grade
 _MIN_TCP_ATTEMPTS = 10  # TCP handshakes below which forward-loss isn't trusted → fall back to ICMP
+# The verdict grades only on trustworthy data: rows measured by a `code_version` at/after this.
+# Older rows used a superseded method (loss/grade artifacts — see docs/DATA_VERSIONS.md). Bump this
+# only when a change makes older data incomparable for grading. Lexical >= is correct for
+# single-digit semver components (DATA_VERSIONING.md caveat: use a parsed tuple before any hits 10).
+_MIN_TRUSTED_VERSION = "0.2.0"
 
 
 def _scope(
     column: InstrumentedAttribute[int | None], network_id: int | None
 ) -> list[ColumnElement[bool]]:
     return [column == network_id] if network_id is not None else []
+
+
+def _trusted_window(session: Session, now: float, window: int) -> tuple[float, int]:
+    """The (start, window) the verdict grades over. Capped twice: to raw retention (raw ping rows
+    are pruned at `raw_hours`, so a 7-day request only has ~48 h — don't compute coverage against
+    time), and to when trusted collection began, so a superseded probe's loss/grade never enters the
+    verdict (docs/DATA_VERSIONING.md). window is recomputed so coverage covers the trusted span."""
+    window = min(window, get_config().retention.raw_hours * 3600)
+    start = now - window
+    trusted_start = _earliest_trusted_ts(session)
+    if trusted_start is not None and trusted_start > start:
+        start = trusted_start
+        window = int(now - start)
+    return start, window
+
+
+def _earliest_trusted_ts(session: Session) -> float | None:
+    """When the current trusted measurement method began: the earliest `first_seen_ts` among
+    registry versions >= `_MIN_TRUSTED_VERSION`. The grade's window is capped to this so it never
+    mixes in data from a superseded probe (versions are contiguous in time). None when nothing
+    trustworthy has been recorded yet (e.g. tests without a registry)."""
+    rows = session.execute(select(DataVersion.version, DataVersion.first_seen_ts)).all()
+    trusted = [ts for version, ts in rows if version >= _MIN_TRUSTED_VERSION]
+    return min(trusted) if trusted else None
 
 
 def _forward_loss(session: Session, start: float, network_id: int | None) -> float | None:
@@ -121,6 +151,7 @@ def _forward_loss(session: Session, start: float, network_id: int | None) -> flo
         select(TcpConnect).where(
             TcpConnect.ts >= start,
             TcpConnect.target.in_(internet),
+            TcpConnect.code_version >= _MIN_TRUSTED_VERSION,  # forward-loss from trusted data only
             *_scope(TcpConnect.network_id, network_id),
         )
     ).all()
@@ -1004,16 +1035,14 @@ def gather_stats(
 ) -> WindowStats:
     """Roll the stored samples in a window into the inputs the verdict engine reasons over."""
     now = time.time()
-    # Loss/latency/coverage read RAW ping rows, which are pruned at `raw_hours`; a 7-day request
-    # therefore only has ~48 h of data. Cap the window to what raw retention can actually cover so
-    # availability (downtime / covered) and coverage% aren't computed against absent time.
-    window = min(window, get_config().retention.raw_hours * 3600)
-    start = now - window
+    start, window = _trusted_window(session, now, window)
     hosts = _internet_hosts()
 
     pings = session.scalars(
         select(PingRaw).where(
-            PingRaw.ts >= start, PingRaw.target.in_(hosts), *_scope(PingRaw.network_id, network_id)
+            PingRaw.ts >= start, PingRaw.target.in_(hosts),
+            PingRaw.code_version >= _MIN_TRUSTED_VERSION,  # exclude any stray untrusted rows
+            *_scope(PingRaw.network_id, network_id),
         )
     ).all()
     pings = _drop_measurement_artifacts(session, pings, start, network_id)

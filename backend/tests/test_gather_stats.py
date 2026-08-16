@@ -1,9 +1,10 @@
 import time
 from pathlib import Path
 
+from netpulse import __version__
 from netpulse.analysis.verdict import conclude
 from netpulse.api import queries
-from netpulse.db.models import Network, PingRaw, TcpConnect
+from netpulse.db.models import DataVersion, Network, PingRaw, TcpConnect
 from netpulse.db.session import get_session, init_engine
 
 
@@ -126,3 +127,42 @@ def test_grade_drops_when_tcp_forward_path_really_fails(tmp_path: Path) -> None:
         stats = queries.gather_stats(s, window=6 * 3600, window_label="", network_id=None)
     assert stats.loss is not None and stats.loss >= 15  # forward loss surfaced to the grade
     assert conclude(stats).score.grade == "F"
+
+
+def test_grade_excludes_untrusted_version_rows(tmp_path: Path) -> None:
+    # A trusted target is clean; an untrusted (0.0.0) target shows heavy loss in the SAME window.
+    # With no registry row there is no time cap, so only the code_version filter can exclude the bad
+    # rows — the grade must be computed on the trusted data alone.
+    init_engine(tmp_path / "gs_trust.db")
+    now = time.time()
+    with get_session() as s:
+        for i in range(60):
+            t = now - i * 3
+            s.add(_ping(t, "1.1.1.1", 48.0, loss=0.0))  # current version (trusted), clean
+            bad = _ping(t, "9.9.9.9", 16.0, loss=50.0)  # heavy loss...
+            bad.code_version = "0.0.0"  # ...but untrusted
+            s.add(bad)
+        s.commit()
+    with get_session() as s:
+        stats = queries.gather_stats(s, window=6 * 3600, window_label="", network_id=None)
+    assert stats.typical_loss is not None and stats.typical_loss < 5  # 0.0.0 50%-loss excluded
+    assert conclude(stats).score.grade != "F"
+
+
+def test_grade_window_capped_to_trusted_start(tmp_path: Path) -> None:
+    # The registry marks trusted collection as starting 10 min ago. Data measured BEFORE that — even
+    # stamped a trusted version — is from a superseded regime and must not enter the grade. Only the
+    # window cap (not the row filter) can exclude it here, since both batches carry __version__.
+    init_engine(tmp_path / "gs_cap.db")
+    now = time.time()
+    with get_session() as s:
+        s.add(DataVersion(version=__version__, first_seen_ts=now - 600))
+        for i in range(60):  # inside the trusted span (last 10 min), clean
+            s.add(_ping(now - i * 3, "1.1.1.1", 48.0, loss=0.0))
+        for i in range(60):  # older than the trusted start, heavy loss
+            s.add(_ping(now - 3600 - i * 3, "1.1.1.1", 48.0, loss=50.0))
+        s.commit()
+    with get_session() as s:
+        stats = queries.gather_stats(s, window=6 * 3600, window_label="", network_id=None)
+    assert stats.typical_loss is not None and stats.typical_loss < 5  # pre-trusted-start excluded
+    assert conclude(stats).score.grade != "F"
